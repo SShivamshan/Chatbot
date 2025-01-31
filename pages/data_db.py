@@ -1,17 +1,16 @@
 import sys
-import types
+from typing import List,Dict 
 sys.path.append("..")
 import os
-from sqlalchemy import create_engine, text, Column, String, Integer,ForeignKey,DateTime,Text
+from sqlalchemy import Column, String, Integer,ForeignKey,DateTime,Text
 from sqlalchemy.orm import relationship,sessionmaker
-from sqlalchemy.exc import IntegrityError
 import logging
 from contextlib import contextmanager
 import streamlit as st
 from datetime import datetime, timezone
 from pages.base import Base
 from collections import deque
-## Solution : https://ploomber.io/blog/streamlit-postgres/ 
+## Solution adapted from: https://ploomber.io/blog/streamlit-postgres/ 
 
 class ChatData(Base):
     __tablename__ = 'chat_data'
@@ -30,6 +29,12 @@ class MessageData(Base):
     ai_prompt = Column(Text,nullable=True)
     timestamp = Column(DateTime, default=datetime.now(timezone.utc))
     chat = relationship('ChatData', back_populates='messages')
+    
+class ImageData(Base):
+    __tablename__ = 'images'
+    id = Column(Integer, primary_key=True)
+    img_id = Column(String, nullable=False)
+    img_url = Column(String, nullable=False)
 
 class ChatDataManager:
     _instance  =  None
@@ -95,8 +100,8 @@ class ChatDataManager:
                     return False
                 
                 session.delete(chat_to_delete)
-                session.flush()
-                session.commit()
+                # session.flush()
+                # session.commit()
                 self.logger.info(f"Chat with ID {chat_id} successfully deleted from the database.")
                 return True
         except Exception as e:
@@ -111,7 +116,7 @@ class ChatDataManager:
                     self.logger.info(f"No chat found with ID {chat_id}.")
                     return False
                 chat_to_update.pdf_ref = pdf_ref
-                session.commit()
+                # session.commit()
                 self.logger.info(f"PDF reference added for chat with ID {chat_id}.")
                 return True
         except Exception as e:
@@ -136,8 +141,7 @@ class ChatDataManager:
         """
         try:
             with self.session_scope() as session:
-                # Prepare MessageData objects
-                message_objects = []  # List to store MessageData objects
+                message_objects = []
                 i = 0
                 while i < len(messages):
                     # Extract the User message
@@ -152,7 +156,7 @@ class ChatDataManager:
                     else:
                         ai_message = None
 
-                    if user_message or ai_message:  # Only create MessageData if either is present
+                    if user_message or ai_message:
                         message_objects.append(
                             MessageData(chat_id=chat_id, user_prompt=user_message, ai_prompt=ai_message)
                         )
@@ -162,7 +166,7 @@ class ChatDataManager:
                 
                 # Add all MessageData objects to the session
                 session.add_all(message_objects)
-                session.commit()
+                # session.commit()
             return True
         except Exception as e:
             self.logger.error(f"Failed to add messages: {str(e)}", exc_info=True)
@@ -182,3 +186,74 @@ class ChatDataManager:
                     history.append({"role": "AI", "content": msg.ai_prompt})
 
             return history
+        
+class ImageManager:
+    _instance  =  None
+    
+    def __new__(cls,*args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self,engine = None):
+        if not hasattr(self, 'initialized'):
+            self._setup_logging()
+            self.engine = engine
+            self.SessionFactory = sessionmaker(bind=self.engine)
+            ImageData.metadata.create_all(self.engine)
+            self.initialized = True
+
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.WARNING,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+    
+    @contextmanager
+    def session_scope(self):
+        session = self.SessionFactory()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"Database error: {str(e)}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def add_image(self, img_data:dict):
+        """
+        Add a new image reference to the database.
+        """
+        try:
+            with self.session_scope() as session:
+                img_objects = []
+                for img_id,img_url in img_data.items():
+                    img_objects.append(
+                        ImageData(img_id = img_id, img_url = img_url)
+                    )
+                
+                session.add_all(img_objects)
+        except Exception as e:
+            self.logger.error(f"Failed to add messages: {str(e)}", exc_info=True)
+            raise Exception(f"Failed to add image: {str(e)}")
+    
+    def get_chat_image(self, img_ids:List = None) -> List[str]:
+        """
+        Get all images associated to the img_ids.
+        """
+        try:
+            with self.session_scope() as session:
+                if img_ids is None:
+                    img_data = session.query(ImageData).all()
+                else:
+                    img_data = session.query(ImageData)\
+                        .filter(ImageData.img_id.in_(img_ids))\
+                        .all()
+                
+                return {img.img_id: img.img_url for img in img_data}
+        except Exception as e:
+            self.logger.error(f"Failed to get image data: {str(e)}", exc_info=True)
+            return None

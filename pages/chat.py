@@ -2,6 +2,7 @@ import sys
 sys.path.append(".")
 import streamlit as st
 from datetime import datetime
+
 class ChatPage:
     def __init__(self, app):
         """Initialize with a reference to the main app."""
@@ -22,6 +23,9 @@ class ChatPage:
             st.session_state.active_page = "home"  # Go back to home page
             st.session_state.layout = "centered"
             st.session_state.sessions[st.session_state.current_session_id]["last_saved_index"] = -1
+            chat_type = st.session_state.sessions[st.session_state.current_session_id].get("chat_type", None)
+            if st.session_state.llm_instances[chat_type] is not None:
+                st.session_state.llm_instances[chat_type].llm.unload_model()
             st.rerun()
         # Display the chat messages and handle input
         self.app.display_chat()
@@ -40,6 +44,9 @@ class ChatPage:
         if st.button("⬅️ Back to Home"):
             st.session_state.active_page = "home"  # Go back to home page
             st.session_state.layout = "centered"
+            chat_type = st.session_state.sessions[st.session_state.current_session_id].get("chat_type",None)
+            if len(st.session_state.llm_instances[chat_type]) != 0:
+                st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
             st.rerun()
 
         self.app.display_chat()

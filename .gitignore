@@ -1,4 +1,6 @@
 .env 
 __pycache__ 
 temp.txt
+temp.ipynb
 /database 
+/images/img_output

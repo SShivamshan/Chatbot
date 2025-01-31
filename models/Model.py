@@ -3,16 +3,19 @@ import requests
 from typing import Optional, List
 from pydantic import Field
 import json
+import logging
+import subprocess
+from langchain_ollama import ChatOllama
 
-
-class Chatbot(LLM):
+class Chatbot(ChatOllama):
     base_url: str = Field(None,alias='base_url')
     model: str = Field(None,alias='model')
     context_length: int = Field(None,alias='context_length')
+    logger: logging.Logger = Field(None, alias='logger')
 
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 18000):
         """
-        A chatbot class leveraging Ollama's local LLM.
+        A chatbot class leveraging Ollama's local LLMs (llama3.2:3b, )
 
         Args:
             base_url (str): The local Ollama server URL.
@@ -23,30 +26,45 @@ class Chatbot(LLM):
         self.base_url = base_url
         self.model = model
         self.context_length = context_length
+        self.logger = self._setup_logging()
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.WARNING,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger(__name__)  # Local variable
+        return logger
+
+    def _call(self, prompt: str, image: Optional[str] = None, stop: Optional[List[str]] = None) -> str: # type: ignore
         """
         Make a call to the local Ollama API.
 
         Args:
             prompt (str): The prompt to send to the LLM.
+            image (Optional[str]): A base64-encoded image string (optional).
             stop (Optional[List[str]]): Optional stop tokens.
 
         Returns:
             str: The generated response from the model.
         """
         payload = {
-        "model": self.model,
-        "prompt": prompt,
-        "context_length": self.context_length
+            "model": self.model,
+            "prompt": prompt,
+            "context_length": self.context_length
         }
+
         if stop:
             payload["stop"] = stop
+
+        # Directly include the base64-encoded image
+        if image and self.model.startswith("llava"):
+            payload["image"] = image
+
         try:
             response = requests.post(f"{self.base_url}/api/generate", json=payload, stream=True)
             response.raise_for_status()
 
-            # print("Raw response content:", response.text)
             # Process the streamed response
             generated_text = ""
             for line in response.iter_lines(decode_unicode=True):
@@ -55,10 +73,9 @@ class Chatbot(LLM):
                         data = json.loads(line)  # Parse each JSON object
                         generated_text += data.get("response", "")  # Append "response" field
                         if data.get("done"):  # Stop if "done" is true
-
                             break
                     except json.JSONDecodeError:
-                        print(f"Skipping invalid JSON line: {line}")  # Debugging purposes
+                        self.logger.info(f"Skipping invalid JSON line: {line}")  # Debugging purposes
 
             return generated_text.strip()
 
@@ -67,6 +84,36 @@ class Chatbot(LLM):
 
         except ValueError as e:
             raise RuntimeError(f"Invalid response from the API: {e}")
+
+
+    def unload_model(self, model_name:str=None): # Solution : https://github.com/ollama/ollama/issues/1600 
+        """
+        Unload the current model or the given model from memory by calling the Ollama API.
+        """
+        model_to_unload = model_name if model_name else self.model
+
+        if not model_to_unload:  # Ensure a model name is available
+            self.logger.error("No model specified to unload.")
+            return
+
+        curl_command = [
+            "curl",
+            f"{self.base_url}/api/generate",
+            "-d", f'{{"model": "{model_to_unload}", "keep_alive": 0}}'
+        ]
+
+        try:
+            result = subprocess.run(curl_command, capture_output=True, text=True, check=True)
+
+            # Check if the command was successful
+            if result.returncode == 0:
+                self.logger.info(f"Successfully unloaded model: {self.model}")
+            else:
+                self.logger.info(f"Failed to unload model: {result.stderr}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error unloading model: {e}")
+        except Exception as e:
+            self.logger.exception(f"Unexpected error: {e}")
 
     @property
     def _identifying_params(self) -> dict:
@@ -84,11 +131,12 @@ class Chatbot(LLM):
     @property
     def _llm_type(self) -> str:
         """
-        Return the type of LLM being used. # Thinking of adding OpenAI
+        Return the type of LLM being used. Such as llama3.2 would be only for text based answers and 
+        llava3.2 would be for image-based and text-based answers especially for RAG. 
 
         Returns:
-            str: The LLM type ("ollama").
+            str: The LLM type ("ollama" or "llava").
         """
-        return "ollama"
+        return self.model
 
 

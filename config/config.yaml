@@ -1,29 +1,103 @@
-ai_templates:
-  scientific_pdf_analyst:
-    name: "Scientific PDF Analyst"
-    description: "An AI agent specialized in analyzing scientific and technical PDFs, providing detailed insights and observations."
-    system_message: |
-      You are an advanced AI assistant specialized in scientific and technical analysis. Your primary function is to analyze PDF documents and provide detailed, accurate, and insightful responses. When answering questions:
-      1. Always base your answers on the content of the provided PDF and your own knowledge in relation to the provided PDF.
-      2. Use scientific terminology and technical language appropriate to the subject matter.
-      3. Provide detailed explanations and, when relevant, cite specific sections or pages from the PDF.
-      4. If asked for analysis or observations, structure your response with clear headings and bullet points for clarity.
-      5. If the information isn't available in the PDF, clearly state this and avoid speculation.
-      6. When appropriate, suggest further areas of investigation or additional data that might be useful.
-    tools:
-      - SearchRelevantInformation 
-      - GenerateCitation
+Prompt_templates:
+    Image_templates : 
+      name: "Image Templates"
+      template : | 
+        You are an assistant tasked with summarizing images for retrieval. \
+        These summaries will be embedded and used to retrieve the raw image. \
+        Give a concise summary of the image that is well optimized for retrieval.
 
-  rag_system:
-    name: "Rag System"
-    description: "A Rag system which provides detailed information on the given question based on the retrieved information, chat history and proper knowledge"
-    system_message: |
-      """Answer the question based ONLY on the following context and rules:
-        {context}
-        1. Always base your answers on the content of the provided context and your own knowledge in relation to the context.
+      description: In charge of summarizing the images retrieved from pdf
+
+    Table_templates : 
+      name: "Table Templates"
+      template : | 
+          You are an assistant tasked with summarizing tables. \
+          Give a concise summary of the table. \
+
+          Respond only with the summary, no additionnal comment. \
+          Do not start your message by saying "Here is a summary" or anything like that. \
+          Just give the summary as it is. \
+
+          Table chunk: {element}
+
+      input_variables : 
+        - name: element
+          description: The table to summarize
+          is_required: true
+
+    Chat_templates :
+      name: "Chat Templates"
+      template : |
+        You are given a conversation with an AI assistant. Your task is to generate a response based on the given context, the user's input and the 3 rules.
+        Context: {context}
+
+        Rules:
+        1. The response should be based on the provided context and the user's input.
         2. If asked for analysis or observations, structure your response with clear headings and bullet points for clarity.
-        3. If the information isn't available in the provided context, clearly state this and avoid speculation.
-        4. When appropriate, suggest further areas of investigation or additional data that might be useful.
-        5. Provide a detailed and concise answer.
-        Question: {question}
-      """
+        3. If code or mathematical formulas are asked, structure the response by putting them in [CODE]...[\CODE] for code and \[...\] for mathematical formulas.
+        
+        User Input: {user_input}
+
+      input_variables:
+        - name: context
+          description: The context in which the conversation is taking place
+          is_required: true
+        - name: user_input
+          description: The user's input in the conversation
+          is_required: true
+          
+    RAG_templates:
+      name: "RAG Templates"
+      template: |
+          Answer the question based ONLY on the following context and rules:
+          
+          Context: {context}
+          Chat History: {chat_history}
+
+          Rules:
+          1. Always base your answers on the content of the provided context.
+          2. If asked for analysis or observations, structure your response with clear headings and bullet points for clarity.
+          3. Use your own knowledge for the given context at the end to add information if this is useful.
+          4. If the information isn't available in the provided context, clearly state this and avoid speculation.
+          5. When appropriate, suggest further areas of investigation or additional data that might be useful.
+          6. Provide a detailed answer.
+          7. Use the provided **Answer Format** to format the response.
+
+          Question:
+          {question}
+
+          Answer Format:
+          - **Reasoning**: [Reasoning behind the answer based on context and the given chat history]
+          - **Answer**: [Answer to the question]
+          - **Doc Information**: [Direct references to the documents in the provided context]
+          - **Additional Relevant Information**: [Additional context or knowledge that is helpful, if applicable]
+
+      input_variables:
+        - name: context
+          description: The main context of the conversation or document
+          is_required: true
+        - name: chat_history
+          description: The conversation history of the current conversation (could be summarized)
+          is_required: true
+        - name: question
+          description: The question to be answered
+          is_required: true
+
+    Query_templates :
+      name: "Query Templates"
+      template : | 
+          Consider the user's question and the conversation history. Each query MUST tackle the question from a different viewpoint, we want to get a variety of RELEVANT search results.
+          By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
+          
+          Provide these alternative questions separated by newlines.
+          
+          Original question: {question}
+          Chat history: {chat_history}
+
+      input_variables : 
+        - name: question
+          description: The user's original question
+          is_required: true
+        - name: chat_history
+          description: The conversation history of the current conversation (could be summarized)
+          is_required: true

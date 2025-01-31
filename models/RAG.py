@@ -1,36 +1,36 @@
 from typing import List, Optional, Dict,Any
 from pydantic import BaseModel, Field
 from langchain.memory import ConversationBufferMemory
-from langchain.prompts import ChatPromptTemplate,PromptTemplate
-from langchain.schema import BaseRetriever
+from langchain.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage
+from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough,RunnableLambda
 from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.schema import format_document,Document
-from langchain_core.messages import get_buffer_string
+from langchain.schema import Document
 from models.Model import Chatbot
-from operator import itemgetter
-
+from pages.data_db import ChatDataManager
+from src.utils import load_ai_template
+from base64 import b64decode
 
 class RAG(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
-    model_name: str = Field(default="llama3.2:3b")
+    model_name: str = Field(default="llava:7b")
     context_length: int = Field(default=18000)
-    ai_template: dict = Field(default_factory=dict)
-    vector_store: Optional[BaseRetriever] = Field(default=None, exclude=True)
-    memory: Optional[ConversationBufferMemory] = Field(default=None, exclude=True)
+    multi_retriever: Optional[Any] = Field(default=None, exclude=True)
+    memory: Optional[ConversationBufferMemory] = Field(default=None, exclude=True)  
     llm: Optional[Any] = Field(default=None, exclude=True)
-    document_prompt: PromptTemplate = Field(
-        default=PromptTemplate.from_template(template="{page_content}")
-    )
-
+    chat_data_manager: Optional[ChatDataManager] = Field(default=None, exclude=True)
+    class Config:
+        arbitrary_types_allowed = True
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model_name: str = "llama3.2:3b",
+        model_name: str = "llava:7b",
         context_length: int = 18000,
-        vector_store: Optional[BaseRetriever] = None,
-        chatbot: Optional[Any] = None
+        multi_retriever: Optional[Any] = None,
+        chatbot: Optional[Any] = None,
+        chat_data_manager: Optional[ChatDataManager] = None,
     ):
         super().__init__(
             base_url=base_url,
@@ -45,186 +45,171 @@ class RAG(BaseModel):
             context_length=context_length
         )
 
-        self.vector_store = vector_store # The retriever from Chroma 
         self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            input_key="question"  # Set input_key to align with combined input
+            memory_key="chat_history",  # Key used to track conversation history
+            input_key="question",      # Key for the input user query
+            output_key="response"      # Key for the output LLM response
         )
-
-    def get_query_prompt(self) -> PromptTemplate:
-        QUERY_PROMPT = PromptTemplate(
-            input_variables=["question", "chat_history"],  # Now includes chat_history
-            template="""You are an AI language model assistant. Your task is to generate five
-            different versions of the given user question, considering the conversation history.
-            By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
-            
-            Provide these alternative questions separated by newlines.
-            
-            Original question: {question}
-            Chat history: {{chat_history}}""", 
-        )
-
-        return QUERY_PROMPT
+        self.multi_retriever = multi_retriever  # The retriever from Chroma for multi-document search
+        self.chat_data_manager = chat_data_manager
     
+    def load_chat_memory(self, chat_id: str):
+        """Load prior chat history into memory."""
+        if not self.chat_data_manager:
+            raise ValueError("ChatDataManager is not initialized.")
+
+        # Fetch chat history from the database
+        history = self.chat_data_manager.get_chat_history(chat_id)
+
+        # Inject into memory using a compact structure
+        if history : 
+            for message in history:
+                self.memory.save_context(
+                    {"question": message["content"] if message["role"] == "User" else None},
+                    {"response": message["content"] if message["role"] == "AI" else None}
+                )
     def summarize_chat_history(self, chat_history: List[Dict[str, Any]]) -> str:
+        """ 
+        Summarizes the chat history using a language model to condense past conversations. 
         """
-        Summarizes the chat history using a language model to condense past conversations.
-        """
-        # Format the chat history to give the model context on how to summarize
         formatted_history = "\n".join(
-            [f"User: {msg['content']}" if msg['role'] == 'user' 
-            else f"AI: {msg['content']}" for msg in chat_history]
+            [f"User: {entry['question']}" if 'question' in entry else "" +
+            f"AI: {entry['response']}" if 'response' in entry else "" 
+            for entry in chat_history]
         )
-
-        # Summarization prompt
-        summarize_prompt = f"Summarize the following conversation briefly:\n\n{formatted_history}"
-
-        # Pass the prompt to the LLM (assuming self.llm is a callable LLM instance)
-        summarized_history = self.llm(summarize_prompt)
-
+        
+        summarize_prompt = f"""Summarize the following conversation briefly. 
+                                Respond only with the summary, no additional comment. 
+                                Do not start your message by saying 'Here is a summary' or anything like that.
+                                
+                                {formatted_history}
+                                """
+        summarized_history = self.llm._call(summarize_prompt)
         return summarized_history
     
-    def _combine_documents(
-        self,
-        docs: List[Document],
-        document_separator: str = "\n\n"
-    ) -> str:
-        """Combine multiple documents into a single string."""
-        doc_strings = [format_document(doc,self.document_prompt) for doc in docs]# self.document_prompt.format(**doc.model_dump())
-        return document_separator.join(doc_strings)
-    
-    def build_prompt(self, kwargs: dict) -> list:
+    def build_prompt(self,kwargs, config_path="config/config.yaml"):
         """
-        Dynamically build the prompt by merging chat history with retrieved context.
-        """
-        # Extract context and chat history from kwargs
-        context = kwargs.get("context", [])  # Expecting a list of Documents
-        chat_history = kwargs.get("chat_history", [])
-
-        # If chat history is too long, summarize it
-        if len(chat_history) > 5:  # Example: Summarize after 5 messages
-            summarized_chat_history = self.summarize_chat_history(chat_history)
-        else:
-            # Use raw chat history if it's small
-            summarized_chat_history = "\n".join(
-                [f"User: {msg['content']}" if msg['role'] == 'user' 
-                else f"AI: {msg['content']}" for msg in chat_history]
-            )
-
-        # Combine documents into formatted context
-        formatted_context = self._combine_documents(context) if context else ""
-
-        # Merge summarized chat history with the formatted context
-        full_context = (
-            f"{summarized_chat_history}\n\n{formatted_context}" 
-            if summarized_chat_history 
-            else formatted_context
-        )
-
-        query_template = """Answer the question based ONLY on the following context and rules:
-
-        Context: {context}
+        Build a dynamic prompt using context, user question and prior chat history, with a template loaded from config.yaml.
         
-        Rules:
-        1. Always base your answers on the content of the provided context.
-        2. If asked for analysis or observations, structure your response with clear headings and bullet points for clarity.
-        3. Use your own knowledge for the given context at the end to add information if this is useful.
-        4. If the information isn't available in the provided context, clearly state this and avoid speculation.
-        5. When appropriate, suggest further areas of investigation or additional data that might be useful.
-        6. Provide a detailed and concise answer.
-        7. Use the provided answer format to format the answer.
+        Parameters:
+            kwargs (dict): Contains "context" (text/images), "question" and chat_history.
+            config_path (str): Path to the YAML file with templates.
 
-        Answer Format:
-        Doc Information:
-        [Information directly from the provided documents]
-
-        Additional Relevant Information:
-        [Any relevant additional context or knowledge]
-
-        Question: {question}
+        Returns:
+            ChatPromptTemplate: A formatted prompt ready for processing.
         """
+        # Load template from config.yaml
+        templates = load_ai_template(config_path)
+        query_template = templates["Prompt_templates"]["RAG_templates"]["template"]
 
-        prompt_template = ChatPromptTemplate.from_template(query_template)
+        docs_by_type = kwargs.get("context", {})
+        user_question = kwargs.get("question", "")
+        chat_history = kwargs.get("chat_history", "")
+        working_history = chat_history
 
-        return prompt_template.format_messages(
-            context=full_context,
-            question=kwargs["question"]
+        if len(chat_history) > 6: # Summarize chat history
+            working_history = self.summarize_chat_history(chat_history=chat_history)
+
+        context_text = ""
+        if "texts" in docs_by_type and docs_by_type["texts"]:
+            for text_element in docs_by_type["texts"]:
+                context_text += text_element.page_content + "\n"
+
+        template_variables = {
+            "context": context_text,
+            "question": user_question,
+            "chat_history": working_history,  
+        }
+        prompt_template = query_template.format(**template_variables)
+
+        # Construct the final prompt content
+        prompt_content = [{"type": "text", "text": prompt_template}]
+
+        # Include images if available
+        if "images" in docs_by_type and docs_by_type["images"]:
+            for image in docs_by_type["images"]:
+                prompt_content.append(
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}}
+                )
+
+        # Return the formatted ChatPromptTemplate
+        return ChatPromptTemplate.from_messages(
+            [
+                HumanMessage(content=prompt_content),
+            ]
         )
+
+    @staticmethod
+    def parse_docs(docs):
+        """Split base64-encoded images and texts"""
+        b64 = []
+        text = []
+        for doc in docs:
+            try:
+                b64decode(doc)
+                b64.append(doc)
+            except Exception as e:
+                text.append(doc)
+        return {"images": b64, "texts": text}
 
     def initialize_rag(self):
-        QUERY_PROMPT = self.get_query_prompt()
-
-        loaded_memory = RunnablePassthrough.assign(
-            chat_history=RunnableLambda(self.memory.load_memory_variables) | itemgetter("chat_history")
-        )
-
-        # Initialize MultiQueryRetriever
-        retriever = MultiQueryRetriever.from_llm(
-            retriever=self.vector_store,
-            llm=self.llm,
-            prompt=QUERY_PROMPT,
-        )
-
-        query_generation = { # Generate an advanced query based on the question and the chat history 
-            "retrieved_question": {
-                "question": lambda x: x["question"],
-                "chat_history": lambda x: get_buffer_string(x["chat_history"])
-            } | QUERY_PROMPT | self.llm
-        }
-
-        document_retrieval = {
-            "context": itemgetter("retrieved_question") | retriever,
-            "question": lambda x: x,
-        }
         
-        final_chain = (
-            loaded_memory 
-            | query_generation 
-            | document_retrieval 
-            | RunnableLambda(self.build_prompt)
-            | self.llm 
-            | StrOutputParser()
+        multi_query_retriever = MultiQueryRetriever.from_llm(
+            retriever=self.multi_retriever, # we use the mutlimodal retriever as the retiever to retieve all related form of results
+            llm=self.llm,
         )
+        # return multi_query_retriever
+        try:
+            retrieval_pipeline = {
+                "context": multi_query_retriever | RunnableLambda(self.parse_docs),
+                "question": RunnablePassthrough(),
+                "chat_history": RunnableLambda(lambda _: self.memory.load_memory_variables({}).get("chat_history", "")), 
+            } | RunnablePassthrough().assign(
+                response=(
+                    RunnableLambda(self.build_prompt) 
+                    | self.llm
+                    | StrOutputParser()
+                )
+            )
+            return retrieval_pipeline
+        except Exception as e:
+            print(f"Error in RAG pipeline: {e}")
+            return None  # Return None if error occurred during pipeline execution.  
 
-        return final_chain
-
-    async def arun(self, query: str) -> str:
+    async def arun(self, query: str, chat_id: str = None) -> Dict:
         """Execute the RAG pipeline asynchronously."""
+        # Load prior chat memory
+        if chat_id:
+            self.load_chat_memory(chat_id)
+
         rag_chain = self.initialize_rag()
         
         input_data = {
             "question": query,
-            "chat_history": self.memory.chat_memory.messages
+            "chat_history": self.memory.load_memory_variables({}).get("chat_history", ""), 
         }
         
         response = await rag_chain.ainvoke(input_data)
-        
-        if self.memory:
-            await self.memory.save_context(
-                inputs={"question": query},
-                outputs={"response": response}
-            )
-            
+        response_text = response if isinstance(response, str) else response.get("response", str(response))
+
+        self.memory.save_context({"question": query}, {"response": response_text}) 
         return response
 
-    def run(self, query: str) -> str:
+    def run(self, query:str, chat_id: str = None) -> Dict:
         """Execute the RAG pipeline synchronously."""
-        rag_chain = self.initialize_rag()
+        # Load prior chat memory
+        if chat_id:
+            self.load_chat_memory(chat_id)
 
+        rag_chain = self.initialize_rag()
         input_data = {
             "question": query,
-            "chat_history": self.memory.chat_memory.messages
+            "chat_history": self.memory.load_memory_variables({}).get("chat_history", ""), 
         }
-
         response = rag_chain.invoke(input_data)
+        response_text = response if isinstance(response, str) else response.get("response", str(response))
 
-        if self.memory:
-            self.memory.save_context(
-                inputs={"question": query},
-                outputs={"response": response}
-            )
-
-        return response
+        self.memory.save_context({"question": query}, {"response": response_text}) # Solution : https://cheatsheet.md/langchain-tutorials/langchain-memory 
+        return response 
 
         

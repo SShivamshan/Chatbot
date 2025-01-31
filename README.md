@@ -10,7 +10,8 @@
 7. [Configuration](#configuration)
 8. [Contributing](#contributing)
 9. [License](#license)
-10. [Improvements](#improvements)
+10. [Troubleshooting](#troubleshooting)
+11. [Improvements](#improvements)
 
 ## Introduction
 
@@ -88,6 +89,21 @@ To run the chatbot application, execute the following command from the project r
 - Ollama        0.5.1
 - Langchain     0.3.9 
 
+Since we use ``unstructured`` module directly, it requires the installation of dependencies which are quiet troublesome. 
+Since the application is primarily based on PDF files, we need to install the following dependencies : 
+
+    poppler-utils tesseract-ocr libmagic-dev
+
+### Installing Dependencies with Conda
+
+While poppler-utils can be installed via pip, we recommend using Conda for the other dependencies to avoid compatibility issues:
+
+    conda install -c conda-forge libmagic
+
+    conda install conda-forge::tesseract
+
+
+
 For a complete list of dependencies, refer to the `requirements.txt` file.
 
 ## Configuration
@@ -108,6 +124,23 @@ Contributions to this project are welcome. Please follow these steps to contribu
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Troubleshooting
+### NVIDIA GPU Compatibility
+If you're using an NVIDIA GPU, you might encounter compatibility issues with PyTorch versions that are installed as dependencies. This typically occurs because the installed torch/torchvision versions might not match your GPU's CUDA version.
+
+Solution: Install PyTorch with one version lower than your current NVIDIA CUDA version.
+
+Example: If you have CUDA 12.2, install PyTorch for CUDA 12.1
+
+
+### NLTK Tokenizers
+The application requires specific NLTK tokenizers for text processing. We've included a function that automatically checks for and installs required tokenizers if they're missing.
+If you encounter tokenizer-related errors, you can manually install them using:
+
+    python -m ntlk.downloader name of the tokenizer or tagger 
+
+Example :   `` python -m ntlk.downloader punk_tab ``
 
 ## Improvements
 
