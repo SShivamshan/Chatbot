@@ -14,6 +14,7 @@ import yaml
 from PIL import Image
 import chromadb
 from pydantic import Field
+from PyPDF2 import PdfReader
 
 
 # LangChain imports
@@ -40,7 +41,7 @@ import base64
 
 # Solution :https://bennycheung.github.io/ask-a-book-questions-with-langchain-openai 
 
-def split_chuncks(text:List[CompositeElement]) -> List[Document]: # Solution : https://python.langchain.com/v0.2/docs/tutorials/retrievers/#documents 
+def split_chuncks(text:List[CompositeElement],filename:str) -> List[Document]: # Solution : https://python.langchain.com/v0.2/docs/tutorials/retrievers/#documents 
     """
     Split the text into chunks and adds metadata to each chunk to link it to the following chunk
     
@@ -53,7 +54,6 @@ def split_chuncks(text:List[CompositeElement]) -> List[Document]: # Solution : h
        documents = List[Document]
     """
     page_docs = [Document(page_content=page.text) for page in text]
-    filename = text[0].to_dict()["metadata"].get("filename", None)
     # Add page numbers as metadata
     for i, doc in enumerate(page_docs):
         doc.metadata["page"] = i + 1
@@ -86,9 +86,35 @@ def split_chuncks(text:List[CompositeElement]) -> List[Document]: # Solution : h
     logging.info("File has been chunked with metadata: %i", len(doc_chunks))
     return doc_chunks,doc_ids
 
+def get_pdf_title(pdf_path) -> str:
+    """
+    Return the title of the pdf file
+
+    params
+    ------ 
+        pdf_path (str): Path to the PDF file
+    
+    returns
+    -------
+        str: Title of the pdf file if it exists else "No title found"
+    """
+
+    pdf_stream = BytesIO(pdf_path)
+    reader = PdfReader(pdf_stream)
+    metadata = reader.metadata  # Extract metadata
+    title = metadata.get('/Title', None)  # Get title if available
+    return title or "No title found"
+
+
 def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434"): # Solution : https://github.com/ollama/ollama/issues/1600 
     """
     Unload the given model from memory by calling the Ollama API.
+    
+    params
+    ------
+        - logger (Logger): Logger object for logging messages
+        - model_name (str): Name of the model to be unloaded
+        - base_url (str): Base URL of the Ollama server (default: "http://localhost:11434")
     """
     curl_command = [
         "curl",
@@ -148,7 +174,17 @@ class Vectordb:
         return logger
     
     def populate_vector(self, documents: List[Document]) -> bool:
-        """Populates the vectordb with the embedding of the given file"""
+        """
+        Populates the vectordb with the embedding of the given file
+
+        params
+        ------
+            - documents (List[Document]): List of documents to be added to the vector store
+
+        returns
+        -------
+            bool: True if all documents are added to the vector store successfully, False otherwise
+        """
         
         try:
             existing_count = self.collection.count() # Returns the number of embedded elements in the vector db
@@ -171,6 +207,17 @@ class Vectordb:
     def search_similarity(self,query:str,filter:Dict = None,score:bool = False,k:int = 2) -> List[Document]:
         """
         Search the knowledge base with the given query and return up to 4 documents
+
+        params
+        ------
+            - query (str): Query to be searched in the knowledge base
+            - filter (Dict): Additional filter parameters for the search
+            - score (bool): Whether to return the score along with the documents (default: False)
+            - k (int): Number of documents to return (default: 2)
+
+        returns
+        -------
+            List[Document]: List of documents that match the search query, up to 'k' documents.
         """
         # Search for similarity between documents in the knowledge base and the query
         try:
@@ -279,19 +326,42 @@ class CitationTool(BaseTool):
         return parsed_results
 
 def load_ai_template(template_name: str) -> Dict:
+    """
+    Load the template present in the config.yaml file
+
+    params
+    ------
+        - template_name (str): Name of the template to be loaded
+
+    returns
+    -------
+        Dict: Template configuration loaded from the config.yaml file
+
+    """
     with open(template_name, 'r') as file:
         config = yaml.safe_load(file)
     return config
 
 
-def get_file_hash(file):
+def get_file_hash(file:str) -> str:
+    """
+    Create the hash for a given file  
+    
+    params
+    ------
+        - file (str): Path of the given file
+
+    returns
+    -------
+        str: Hash of the given file
+    """
     file.seek(0)
     file_hash = hashlib.md5(file.read()).hexdigest()
     file.seek(0)
     return file_hash
 
 
-class PdfReader:
+class PDF_Reader:
     _instance = None
     def __new__(cls):
         if not cls._instance:
@@ -319,14 +389,12 @@ class PdfReader:
                 infer_table_structure=True,            # extract tables
                 strategy="hi_res",                     # mandatory to infer tables
 
-                extract_image_block_types=["Image", "Table"],   # Add 'Table' to list to extract image of tables
-                # image_output_dir_path=output_path,   # if None, images and tables will saved in base64
-
+                extract_image_block_types=["Image", "Table"],   
                 extract_image_block_to_payload=True,   # if true, will extract base64 for API usage
 
-                chunking_strategy="by_title",          # or 'basic'
-                max_characters=10000,                  # defaults to 500
-                combine_text_under_n_chars=2000,       # defaults to 0
+                chunking_strategy="by_title",          
+                max_characters=10000,                  
+                combine_text_under_n_chars=2000,       
                 new_after_n_chars=6000,
 
             )
@@ -387,9 +455,6 @@ class PdfReader:
         texts = []
 
         for chunk in chunks:
-            if "Table" in str(type(chunk)):
-                tables.append(chunk)
-
             if "CompositeElement" in str(type((chunk))):
                 texts.append(chunk)
 
@@ -400,11 +465,12 @@ class PdfReader:
                 for el in chunk_els:
                     if "Image" in str(type(el)):
                         images_b64.append(el.metadata.image_base64)
-
-
+                for el in chunk_els:
+                    if "Table" in str(type(el)):
+                        tables.append(el.metadata.text_as_html)
         return texts,tables,images_b64
 
-    def _get_summaries_table(self,tables:List, chatbot:Chatbot):
+    def _get_summaries_table(self,tables:List[str], chatbot:Chatbot):
         """
         Creates the summaries for tables and returns them
         """
@@ -455,8 +521,9 @@ class PdfReader:
         except Exception as e:
             self.logger.error("Failed to get summaries for images %s", e)
             return []
-        
-    def get_pdf_title(self,chunk):
+    
+    @staticmethod
+    def get_pdf_title(chunk):
         elements = chunk.metadata.orig_elements
         chunk_title = [el for el in elements if 'Title' in str(type(el))]
         chunk_title[0].to_dict()

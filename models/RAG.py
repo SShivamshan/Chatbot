@@ -60,14 +60,14 @@ class RAG(BaseModel):
 
         # Fetch chat history from the database
         history = self.chat_data_manager.get_chat_history(chat_id)
-
         # Inject into memory using a compact structure
         if history : 
             for message in history:
                 self.memory.save_context(
-                    {"question": message["content"] if message["role"] == "User" else None},
-                    {"response": message["content"] if message["role"] == "AI" else None}
+                    {"question": message["content"] if message["role"] == "User" else ""},
+                    {"response": message["content"] if message["role"] == "AI" else ""}
                 )
+
     def summarize_chat_history(self, chat_history: List[Dict[str, Any]]) -> str:
         """ 
         Summarizes the chat history using a language model to condense past conversations. 
@@ -111,9 +111,13 @@ class RAG(BaseModel):
             working_history = self.summarize_chat_history(chat_history=chat_history)
 
         context_text = ""
+        # Verify if the texts are just str or Document instances
         if "texts" in docs_by_type and docs_by_type["texts"]:
-            for text_element in docs_by_type["texts"]:
-                context_text += text_element.page_content + "\n"
+            if isinstance(docs_by_type["texts"],str): # Just the table 
+                context_text += f" Table info : {docs_by_type['texts']} \n" 
+            elif isinstance(docs_by_type["texts"],Document):
+                for text_element in docs_by_type["texts"]:
+                    context_text += text_element.page_content + "\n"
 
         template_variables = {
             "context": context_text,
@@ -200,11 +204,11 @@ class RAG(BaseModel):
         # Load prior chat memory
         if chat_id:
             self.load_chat_memory(chat_id)
-
         rag_chain = self.initialize_rag()
+        chat_memory = self.memory.load_memory_variables({})
         input_data = {
             "question": query,
-            "chat_history": self.memory.load_memory_variables({}).get("chat_history", ""), 
+            "chat_history": chat_memory.get("chat_history", []), 
         }
         response = rag_chain.invoke(input_data)
         response_text = response if isinstance(response, str) else response.get("response", str(response))

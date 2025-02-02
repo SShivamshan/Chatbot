@@ -28,7 +28,7 @@ from pages.home import HomePage
 from pages.chat import ChatPage
 from pages.history import HistoryPage
 from pages.account import AccountManager
-from pages.data_db import ImageManager
+from pages.data_db import ImageManager,TableManager
 from src.utils import *
 
 
@@ -69,11 +69,14 @@ class ChatbotApp:
     
         st.set_page_config(page_title="H1", initial_sidebar_state="collapsed",layout=st.session_state.layout)
         self.__vectorstore = Vectordb()
-        self.pdf_reader = PdfReader()
+        self.pdf_reader = PDF_Reader()
         self.account_page = AccountManager()
         self.img_datadb = ImageManager(engine=self.account_page.engine)
-        if "image_url" not in st.session_state: 
+        self.table_datadb = TableManager(engine=self.account_page.engine)
+        if "image_data" not in st.session_state: 
             st.session_state.image_data = self.img_datadb.get_chat_image()  # Keeps in memory the as key-value pairs the extracted image path save and the image id as it's key
+        if "table_data" not in st.session_state:
+            st.session_state.table_data = self.table_datadb.get_chat_table() # Keep in memory the as key-value pairs the table id as key and the table html as it's value 
         if st.session_state.logged_in and not self.messages_loaded:
             st.session_state.user_id = self.account_page.get_user_id()
             self.on_login(st.session_state.user_id)
@@ -97,7 +100,7 @@ class ChatbotApp:
         try:
             with chat_manager.session_scope() as session:
                 chats = chat_manager.get_user_chats(user_id)
-                for chat,chat_type,pdf_ref in chats:
+                for chat,chat_type,pdf_ref,pdf_filename in chats:
                     if chat not in st.session_state.sessions:  # Only add new chats
                         messages = chat_manager.get_chat_history(chat)
                         st.session_state.chat_counter += 1
@@ -114,6 +117,7 @@ class ChatbotApp:
                             "messages": message_deque,
                             "chat_type": chat_type,
                             "file_hash": pdf_ref if chat_type == 2 else None,
+                            "filename" : pdf_filename if chat_type == 2 else None,
                             "last_saved_index": len(message_deque) - 1,  # Mark all loaded messages as saved
                             "from_history": set(range(len(message_deque))),  # Mark all message indices as from history
                         }
@@ -281,8 +285,8 @@ class ChatbotApp:
             if st.session_state.current_session_id:
                 # Offload all the models 
                 self.unload_all_models()
-
-                self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force = True)
+                unload_model(logger=self.logger, model_name="nomic-embed-text:latest")
+                # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force = True)
 
             self.account_page.logout_db()
 
@@ -312,67 +316,70 @@ class ChatbotApp:
         id_key = "doc_id"
         with st.status(label="Processing the current document...",expanded=True,state="running") as status:
             session = st.session_state.sessions[st.session_state.current_session_id]
-            saved = self.account_page.chats.add_pdf_ref(chat_id=st.session_state.current_session_id,pdf_ref=file_hash)
-            # Solution : https://discuss.streamlit.io/t/st-toast-appears-now-on-the-top-right-corner/68854
-            # The toast appears for 4 seconds and on the top right corner so instead we do this 
-            if saved:
-                st.write("PDF reference added successfully")
-            else:
-                st.write("Failed to add PDF reference.")
-            chunks = self.pdf_reader.read_pdf(file)
-            filename = self.pdf_reader.get_pdf_title(chunks[0])
-            texts, tables, images_64_list = self.pdf_reader.separate_elements(chunks)
-            chunked_texts, doc_ids = split_chuncks(texts)
+            filename = session.get("filename", None)
+            if not self.account_page.chats.pdf_exist(filename):
+                saved = self.account_page.chats.add_pdf_ref(chat_id=st.session_state.current_session_id,pdf_ref=file_hash,pdf_filename=filename)
+                # Solution : https://discuss.streamlit.io/t/st-toast-appears-now-on-the-top-right-corner/68854
+                # The toast appears for 4 seconds and on the top right corner so instead we do this 
+                if saved:
+                    st.write("PDF reference added successfully")
+                else:
+                    st.write("Failed to add PDF reference.")
+                chunks = self.pdf_reader.read_pdf(file)
+                texts, tables, images_64_list = self.pdf_reader.separate_elements(chunks)
+                chunked_texts, doc_ids = split_chuncks(texts,filename)
 
-            session["texts"] = chunked_texts
-            session["doc_ids"] = doc_ids
-            session["tables"] = tables
-            session["images"] = images_64_list
+                session["texts"] = chunked_texts
+                session["doc_ids"] = doc_ids
+                session["tables"] = tables
+                session["images"] = images_64_list
 
-            st.write("Document processed: Text, Tables, and Images extracted.")
+                st.write("Document processed: Text, Tables, and Images extracted.")
 
-            file_paths = self.save_through_thread(func=self._save_images, img=images_64_list,filename=filename)
-            if file_paths is None:
-                self.logger.error("File paths were not retrieved from the thread")
-            
-            chatbot = Chatbot(model="llava:7b")
-            image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot)
-            table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot)
-            chatbot.unload_model()
-            del chatbot 
-
-            if image_summaries or table_summaries:
-                st.write("Summaries have been generated successfully for images and tables")
-
-            # Save the summaries and the text
-            if chunked_texts:
-                self.__vectorstore.populate_vector(documents=chunked_texts)
-                st.write("Texts have been uploaded successfully")
-            if image_summaries:
-                img_ids = [str(uuid.uuid4()) for _ in images_64_list]
-                session["img_ids"] = img_ids
-                summary_docs = [
-                    Document(page_content=s, metadata={id_key: img_ids[i]})
-                        for i, s in enumerate(image_summaries)
-                ]
-                self.__vectorstore.populate_vector(documents=summary_docs)
-                st.write("Image summaries have been uploaded successfully")
+                file_paths = self.save_through_thread(func=self._save_images, img=images_64_list,filename=filename)
+                if file_paths is None:
+                    self.logger.error("File paths were not retrieved from the thread")
                 
-            if table_summaries:
-                tab_ids = [str(uuid.uuid4()) for _ in tables]
-                session["tab_ids"] = tab_ids
-                table_docs = [
-                    Document(page_content=s, metadata={id_key: tab_ids[i]})
-                        for i, s in enumerate(table_summaries)
-                ]
-                self.__vectorstore.populate_vector(documents=table_docs)
-                st.write("Table summaries have been uploaded successfully")
-            
-            self._save_image_to_db() # Save the images to the db 
-            # unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings  
-            # Update Session State
-            session["embeddings_ready"] = True
-            session["saved"] = True
+                chatbot = Chatbot(model="llava:7b")
+                image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot)
+                table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot)
+                chatbot.unload_model()
+                del chatbot 
+
+                if image_summaries or table_summaries:
+                    st.write("Summaries have been generated successfully for images and tables")
+
+                # Save the summaries and the text
+                if chunked_texts:
+                    self.__vectorstore.populate_vector(documents=chunked_texts)
+                    st.write("Texts have been uploaded successfully")
+                if image_summaries:
+                    img_ids = [str(uuid.uuid4()) for _ in images_64_list]
+                    session["img_ids"] = img_ids
+                    summary_docs = [
+                        Document(page_content=s, metadata={id_key: img_ids[i]})
+                            for i, s in enumerate(image_summaries)
+                    ]
+                    self.__vectorstore.populate_vector(documents=summary_docs)
+                    st.write("Image summaries have been uploaded successfully")
+                    
+                if table_summaries:
+                    tab_ids = [str(uuid.uuid4()) for _ in tables]
+                    session["tab_ids"] = tab_ids
+                    table_docs = [
+                        Document(page_content=s, metadata={id_key: tab_ids[i]})
+                            for i, s in enumerate(table_summaries)
+                    ]
+                    self.__vectorstore.populate_vector(documents=table_docs)
+                    st.write("Table summaries have been uploaded successfully")
+                
+                self._save_image_to_db() # Save the images to the db 
+                self._save_table_to_db()
+                unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings used by the vectorstore
+                # Update Session State
+                session["embeddings_ready"] = True
+                session["saved"] = True
+
             time.sleep(1) # This is due to the fact that the update is done to fast
             status.update(  
                 label="PDF processed!", state="complete"
@@ -405,12 +412,21 @@ class ChatbotApp:
                 uploaded_file = st.file_uploader("Choose a PDF file")# accept_multiple_files=True
                 if uploaded_file:
                     uploaded_file_hash = get_file_hash(uploaded_file)
-
+                    # self.img_datadb.delete_image()
+                    # self.table_datadb.delete_table()
+                    if "filename" not in session:
+                        session["filename"] = get_pdf_title(uploaded_file.getvalue())
+                    
                     # Check if the file is new or if embedding needs to be redone
                     if "file_hash" not in session or session["file_hash"] != uploaded_file_hash:
                         session["file_hash"] = uploaded_file_hash
-                        session["embeddings_ready"] = False
-                        session.pop("saved", None)  # Reset saved flag for new file
+                        if self.account_page.chats.pdf_exist(filename=session["filename"]): # The pdf already exists within our db 
+                            session["embeddings_ready"] = False
+                            session["saved"] = True
+                            st.toast(" 🚨 PDF already present, using stored elements")
+                        else: 
+                            session["embeddings_ready"] = False
+                            session.pop("saved", None)  # Reset saved flag for new file
 
                     if not session.get("saved"):
                         self.render_embeddings_popup(file=uploaded_file,file_hash=uploaded_file_hash)
@@ -556,8 +572,9 @@ class ChatbotApp:
                         response = self.chatbot.run(query=user_input , chat_id = st.session_state.current_session_id)
                         session["messages"].append({"AI": response["response"]})
                         self.render_multi_modal_response(response=response,container=container)
-                        self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
+                        # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
                 except Exception as e:
+                    self.logger.error("An error occured: {e}")
                     st.error(f"An error occurred: {e}")
 
     def _save_images(self, img:List,filename:str):
@@ -583,8 +600,7 @@ class ChatbotApp:
                 # Convert base64 to image and process
                 img_bytes = self.pdf_reader.base64_to_image(image)
                 img = self.pdf_reader.create_image_from_bytes(img_bytes)
-                img = img.resize((100, 100), Image.LANCZOS)
-
+                # img = img.resize((100, 100), Image.LANCZOS)
                 file_paths.append(file_path)
                 img.save(file_path, optimize=True, quality=95)
                 self.logger.info(f'Image saved to: {file_path}')
@@ -613,21 +629,38 @@ class ChatbotApp:
             raise ValueError("The number of file paths does not match the number of img_ids.")
         
         # Pair each img_id with its corresponding file_path
-        for img_id, file_path in zip(img_ids_to_add, new_file_paths):
-            new_images[img_id] = file_path
+        new_images = dict(zip(img_ids_to_add, new_file_paths))
 
         # Add the new images to the database
         if new_images:
             self.img_datadb.add_image(new_images) 
 
-            # Update the session state with the new image
+            # Update the session state with the new image db
             st.session_state.image_data = self.img_datadb.get_chat_image()
-            
+
+
+    def _save_table_to_db(self):
+        # Add the tables to the db 
+        session = st.session_state.sessions[st.session_state.current_session_id]
+        tables_html = session["tables"]
+        tab_ids = session["tab_ids"]
+
+        # Create a dict of tab_ids : tab_html
+        tab_dict = dict(zip(tab_ids, tables_html))
+
+        # Add the tables to the db 
+        if tab_dict:
+            self.table_datadb.add_table(tables=tab_dict)
+
+            # Update the session state with the new table db
+            st.session_state.table_data = self.table_datadb.get_chat_table()
+
     def render_multi_modal_response(self, response:Dict, container= None):
         """Renders the chat message for images and text when dicussing with pdf"""
         # Get the text first 
         with container.chat_message("ai"):
-            filename = response["context"]["texts"][0].metadata.get("filename")
+            session = st.session_state.sessions[st.session_state.current_session_id]
+            filename = session.get("filename", "unknown")
             if "response" in response:
                 st.write(response["response"])
             if "context" in response and "texts" in response["context"]:
@@ -640,50 +673,58 @@ class ChatbotApp:
                         page = metadata.get("page", "Unknown")
                         chunk = metadata.get("chunk", "Unknown")
                         source = metadata.get("source", "Unknown")
-                        filename = metadata.get("filename", "Unknown")
-
                         # Append metadata to the list
-                        data.append({
-                            "Filename": filename,
-                            "Page": page,
-                            "Chunk": chunk,
-                            "Source (Excerpt)": source #source[:100] + "..." if isinstance(source, str) and len(source) > 100 else source
-                        })
+                        if all([page != "Unknown", chunk != "Unknown", source != "Unknown"]):
+                            data.append({
+                                "Filename": filename,
+                                "Page": page,
+                                "Chunk": chunk,
+                                "Source (Excerpt)": source 
+                            })
 
                     # Convert to DataFrame and display it
                     df = pd.DataFrame(data)
                     st.write(df)
 
             # Finally the images
-            session = st.session_state.sessions[st.session_state.current_session_id]
             saved = session.get("saved")
             if not saved:
+                st.markdown(
+                    """
+                    <style>
+                    .custom-image img {
+                        width: 35% !important;
+                        height: auto;
+                        display: block;
+                        margin-left: auto;
+                        margin-right: auto;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
                 if "context" in response and "images" in response["context"] and len(response["context"]["images"]) > 0:
-                        st.markdown(
-                            """
-                            <style>
-                            .custom-image img {
-                                width: 35% !important;
-                                height: auto;
-                                display: block;
-                                margin-left: auto;
-                                margin-right: auto;
-                            }
-                            </style>
-                            """,
-                            unsafe_allow_html=True
-                        )
                         st.write("**Relevant images within the document:**")
-                        imgs = []
                         for image in response["context"]["images"]:
                             image_data = self.pdf_reader.base64_to_image(image)
-                            imgs.append(image_data)
-                            # Save the image
                             st.markdown('<div class="custom-image">', unsafe_allow_html=True)
                             st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
                             st.markdown("</div>", unsafe_allow_html=True)
             else:
-                pass
+                # Retrieve the doc_id from the response["context"]["texts"]
+                doc_ids = set([doc.metadata.get("doc_id") for doc in response["context"]["texts"]])
+                # Retrieve the corresponding image location from the db based on the doc_ids
+
+                files = []
+                for doc_id in doc_ids.intersection(st.session_state.image_data.keys()):
+                    file_path = st.session_state.image_data[doc_id]
+                    if file_path:
+                        files.append(file_path)
+                
+                for img in files:
+                    st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                    st.image(img, width=450, caption=f"Image from the article : {filename}", use_container_width=False)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
 
     def display_pdf(self,file,width:int):  # Solution : https://discuss.streamlit.io/t/display-pdf-in-streamlit/62274 
@@ -807,13 +848,14 @@ class ChatbotApp:
     def unload_all_models(self):
         """Unload all loaded models when the app closes."""
         if "llm_instances" in st.session_state:
-            for chat_type, instances in st.session_state.llm_instances.items():
-                if chat_type == 2:  # PDF chat models (Multiple instances)
-                    for _ , model in instances.items():
-                        if model:
-                            model.llm.unload_model()
-                elif instances:  # Chatbot models (Single instance)
-                    instances.llm.unload_model()
+            if len(st.session_state["llm_instances"]) > 0:
+                for chat_type, instances in st.session_state.llm_instances.items():
+                    if chat_type == 2 and len(st.session_state["llm_instances"][chat_type]) > 0:  # PDF chat models (Multiple instances)
+                        for _ , model in instances.items():
+                            if model:
+                                model.llm.unload_model()
+                    elif instances:  # Chatbot models (Single instance)
+                        instances.llm.unload_model()
 
         self.logger.info("All models have been unloaded from memory.")
     def run(self):

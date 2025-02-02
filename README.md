@@ -15,7 +15,7 @@
 
 ## Introduction
 
-This project implements a chatbot application using Large Language Models (LLM). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes features for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval. FInally plans are in place to create a Machine learning chat bot type sessions that allows users to interact with their machine learning use cases and understand them better. 
+This project implements a chatbot application using Large Language Models (LLM). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes features for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval. FInally plans are in place to create a Machine learning chat bot type sessions that allows users to interact with their machine learning use cases and understand them better. Currently, there are three forms of application, a simple chat bot, a RAG module and finally an AGENT capable of interacting with PDF and research more relevant information on the web. 
 
 ## Project Structure
 The chatbot will start, and you can begin interacting with it through the command line interface.
@@ -23,15 +23,11 @@ The chatbot will start, and you can begin interacting with it through the comman
 llm/
 ├── app.py                  # Main application entry point
 ├── config/
-│   └── config.yaml        # Configuration settings
+│   └── config.yaml        # Template configurations 
 │
 ├── database/              # Database related files
 │   ├── app.db
 │   └── chroma.sqlite3
-│       ├── data_level0.bin
-│       ├── header.bin
-│       ├── length.bin
-│       └── link_lists.bin
 │
 ├── images/
 │   └── ai.png            # Project images
@@ -44,14 +40,15 @@ llm/
 ├── pages/               # Application pages
 │   ├── account.py       # Account management page
 │   ├── base.py         # Base page template for the app.db 
-│   ├── chat.py         # Chat interface
-│   ├── data_db.py      # Database interface
-│   ├── history.py      # Chat history page
+│   ├── chat.py         # Chat interface renderer
+│   ├── data_db.py      # Database interface containing the chat session, image and table management
+│   ├── history.py      # Chat history page renderer
 │   └── home.py         # Home page
 │
-├── src/                 # Source code
-│   ├── main.py         # Main logic
-│   └── utils.py        # Utility functions
+├── src/        
+|   ├── download_tokens.py  # Allows to download tokens     
+│   ├── main.py             # Main logic
+│   └── utils.py            # Utility functions
 │
 ├── LICENSE             # License file
 └──  README.md          # Project documentation
@@ -66,21 +63,26 @@ llm/
 python -m venv venv
 source venv/bin/activate  # On Windows, use venv\Scripts\activate
 ``
+or 
+``conda create -n venv python = 3.10(example) && 
+conda activate venv 
+``
 
 3. Install the required dependencies: `` pip install -r requirements.txt``
 
 
 ## Usage
 
-To run the chatbot application, execute the following command from the project root: ``python src/main.py``
+To run the chatbot application, execute the following command from the project root: ``streamlit run src/main.py``
 ## Features
 
-- Interactive chatbot using LLMs mostly using Ollama (llama3.2 : 3 billion model)
+- Interactive chatbot using LLMs mostly using Ollama (llama3.2 : 3 billion model), llava:7b for images cases. 
 - Document processing and analysis
 - Image and schematic handling
 - Integration with ChromaDB for efficient storage
-- Agents that does the same things as RAG
+- Agents that does the same things as RAG but with the ability to run a search on the web through keywords. 
 - Further addition of machine learning and chat bot mix
+- Possible to offload a model from the GPU when switching between sessions or logging out. 
 
 ## Dependencies
 
@@ -108,7 +110,7 @@ For a complete list of dependencies, refer to the `requirements.txt` file.
 
 ## Configuration
 
-[Explain any configuration files or environment variables that need to be set up]
+Any configuration such as the temperature of the models, the possibility of adding a new ollama model. 
 
 ## Contributing
 
@@ -145,4 +147,7 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 ## Improvements
 
 1. Right now the pdf can only be added one by one and can only render one pdf at the time. Tried to use st.tabs to render the pdf per tabs but only the first tab is rendered. 
-2. 
+2. Takes some time to chunks the pdf when using unstructured module especially true when retreiving tables and images. 
+3. Perhaps add some javascript components. 
+4. Improvements linked to constrained environments. 
+5. Possibly adding docker support 

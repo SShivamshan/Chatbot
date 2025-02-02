@@ -2,8 +2,7 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#       Add the control for the db when saved is done and no embeddings 
-#       Test out the model name for pdf 
+#       check the ouput response and render 
 #       Make the template for the rag prompt better
 #       Correct the agent and add it as the third component
 #       Create a script for the ollama server
@@ -13,3 +12,5 @@ from app import ChatbotApp
 if __name__ == "__main__":
     app = ChatbotApp()
     app.run()
+
+    

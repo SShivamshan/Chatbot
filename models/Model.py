@@ -51,7 +51,8 @@ class Chatbot(ChatOllama):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "context_length": self.context_length
+            "context_length": self.context_length,
+            "temperature" : 0.2                     # Solution : https://github.com/ollama/ollama/issues/6410 
         }
 
         if stop:

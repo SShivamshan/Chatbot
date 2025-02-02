@@ -17,6 +17,7 @@ class ChatData(Base):
     chat_id = Column(String, primary_key=True)
     chat_type = Column(Integer,nullable=False)
     pdf_ref = Column(String,nullable=True)
+    pdf_filename = Column(String,nullable=True)
     user_id = Column(Integer, ForeignKey('accounts.id', ondelete='CASCADE'), nullable=False)
     created_at = Column(DateTime, default=datetime.now(timezone.utc)) 
     messages = relationship('MessageData', back_populates='chat', cascade='all, delete-orphan') # 
@@ -36,6 +37,12 @@ class ImageData(Base):
     img_id = Column(String, nullable=False)
     img_url = Column(String, nullable=False)
 
+class TableData(Base):
+    __tablename__ = 'tables'
+    id = Column(Integer, primary_key=True)
+    table_id = Column(String, nullable=False)
+    table_html = Column(String, nullable=False)
+
 class ChatDataManager:
     _instance  =  None
     
@@ -44,7 +51,7 @@ class ChatDataManager:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self,engine = None):
+    def __init__(self,engine = None) -> None:
         if not hasattr(self, 'initialized'):
             self._setup_logging()
             self.engine = engine
@@ -89,7 +96,7 @@ class ChatDataManager:
 
     def get_user_chats(self, user_id: int) -> list[str]:
         with self.session_scope() as session:
-            return [(chat.chat_id, chat.chat_type, chat.pdf_ref) for chat in session.query(ChatData).filter_by(user_id=user_id).all()]
+            return [(chat.chat_id, chat.chat_type, chat.pdf_ref, chat.pdf_filename) for chat in session.query(ChatData).filter_by(user_id=user_id).all()]
 
     def delete_chat(self, chat_id: str) -> bool:
         try:
@@ -108,7 +115,7 @@ class ChatDataManager:
             self.logger.error(f"Failed to delete chat: {str(e)}", exc_info=True)
             return False
         
-    def add_pdf_ref(self,chat_id: str,pdf_ref :str):
+    def add_pdf_ref(self,chat_id: str,pdf_ref :str,pdf_filename: str) -> bool:
         try:
             with self.session_scope() as session:
                 chat_to_update = session.query(ChatData).filter_by(chat_id=chat_id).first()
@@ -116,6 +123,7 @@ class ChatDataManager:
                     self.logger.info(f"No chat found with ID {chat_id}.")
                     return False
                 chat_to_update.pdf_ref = pdf_ref
+                chat_to_update.pdf_filename = pdf_filename
                 # session.commit()
                 self.logger.info(f"PDF reference added for chat with ID {chat_id}.")
                 return True
@@ -187,6 +195,24 @@ class ChatDataManager:
 
             return history
         
+    def pdf_exist(self,filename) -> bool:
+        """
+        Verify if the pdf exists within all the sessions 
+        """
+        try:
+            with self.session_scope() as session:
+                chats = session.query(ChatData).all()
+                for chat in chats:
+                    if chat.pdf_filename: 
+                        if chat.pdf_filename.lower() == filename.lower():
+                            return True
+                    else:
+                        return False
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to verify pdf existence: {str(e)}", exc_info=True)
+            return False
+        
 class ImageManager:
     _instance  =  None
     
@@ -257,3 +283,99 @@ class ImageManager:
         except Exception as e:
             self.logger.error(f"Failed to get image data: {str(e)}", exc_info=True)
             return None
+        
+
+    def delete_image(self):
+        """
+        Delete all images from the database.
+        """
+        try:
+            with self.session_scope() as session:
+                session.query(ImageData).delete()
+        except Exception as e:
+            self.logger.error(f"Failed to delete images: {str(e)}", exc_info=True)
+            raise Exception(f"Failed to delete images: {str(e)}")
+        
+
+class TableManager:
+    _instance  =  None
+    
+    def __new__(cls,*args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self,engine = None):
+        if not hasattr(self, 'initialized'):
+            self._setup_logging()
+            self.engine = engine
+            self.SessionFactory = sessionmaker(bind=self.engine)
+            TableData.metadata.create_all(self.engine)
+            self.initialized = True
+
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.WARNING,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+
+    @contextmanager
+    def session_scope(self):
+        session = self.SessionFactory()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"Database error: {str(e)}", exc_info=True)
+            raise
+        finally:
+            session.close()
+            
+    def add_table(self,tables:Dict):
+        """
+        Add a new table reference to the database.
+        """
+        try:
+            with self.session_scope() as session:
+                table_objects = []
+                for table_id,table_html in tables.items():
+                    table_objects.append(
+                        TableData(table_id = table_id, table_html = table_html)
+                    )
+                
+                session.add_all(table_objects)
+        except Exception as e:
+            self.logger.error(f"Failed to add table: {str(e)}", exc_info=True)
+            raise Exception(f"Failed to add table: {str(e)}")
+
+    def get_chat_table(self, table_ids:List = None) -> List[str]:
+        """
+        Get all tables associated to the table_ids.
+        """
+        try:
+            with self.session_scope() as session:
+                if table_ids is None:
+                    table_data = session.query(TableData).all()
+                else:
+                    table_data = session.query(TableData)\
+                        .filter(TableData.table_id.in_(table_ids))\
+                        .all()
+                
+                return {table.table_id: table.table_html for table in table_data}
+        except Exception as e:
+            self.logger.error(f"Failed to get table data: {str(e)}", exc_info=True)
+            return None
+        
+    
+    def delete_table(self):
+        """
+        Delete all tables from the database.
+        """
+        try:
+            with self.session_scope() as session:
+                session.query(TableData).delete()
+        except Exception as e:
+            self.logger.error(f"Failed to delete tables: {str(e)}", exc_info=True)
+            raise Exception(f"Failed to delete tables: {str(e)}")
