@@ -13,14 +13,14 @@ class Chatbot(ChatOllama):
     context_length: int = Field(None,alias='context_length')
     logger: logging.Logger = Field(None, alias='logger')
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 18000):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 25000 ):
         """
         A chatbot class leveraging Ollama's local LLMs (llama3.2:3b, )
 
         Args:
             base_url (str): The local Ollama server URL.
             model (str): The name of the model to use (e.g., 'llama3.2:3b').
-            context_length (int): Maximum context length for the chatbot set to 18000 for performance reasons on personnal computer.
+            context_length (int): Maximum context length for the chatbot set to 25000 for performance reasons on personnal computer.
         """
         super(Chatbot,self).__init__()
         self.base_url = base_url
@@ -52,7 +52,7 @@ class Chatbot(ChatOllama):
             "model": self.model,
             "prompt": prompt,
             "context_length": self.context_length,
-            "temperature" : 0.2                     # Solution : https://github.com/ollama/ollama/issues/6410 
+            "temperature" : 0.1                     # Solution : https://github.com/ollama/ollama/issues/6410 
         }
 
         if stop:

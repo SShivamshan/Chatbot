@@ -10,6 +10,7 @@ from threading import Thread
 from queue import Queue, Empty
 from typing import Callable,List, Dict
 
+import torch 
 import pandas as pd
 from PIL import Image
 import streamlit as st
@@ -285,7 +286,6 @@ class ChatbotApp:
             if st.session_state.current_session_id:
                 # Offload all the models 
                 self.unload_all_models()
-                unload_model(logger=self.logger, model_name="nomic-embed-text:latest")
                 # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force = True)
 
             self.account_page.logout_db()
@@ -340,11 +340,14 @@ class ChatbotApp:
                 if file_paths is None:
                     self.logger.error("File paths were not retrieved from the thread")
                 
-                chatbot = Chatbot(model="llava:7b")
-                image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot)
-                table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot)
-                chatbot.unload_model()
-                del chatbot 
+                chatbot_image = Chatbot(model="llava:7b")
+                chatbot_table = Chatbot()
+                image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot_image)
+                table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot_table)
+                chatbot_image.unload_model()
+                chatbot_table.unload_model()
+                del chatbot_table
+                del chatbot_image 
 
                 if image_summaries or table_summaries:
                     st.write("Summaries have been generated successfully for images and tables")
@@ -357,7 +360,7 @@ class ChatbotApp:
                     img_ids = [str(uuid.uuid4()) for _ in images_64_list]
                     session["img_ids"] = img_ids
                     summary_docs = [
-                        Document(page_content=s, metadata={id_key: img_ids[i]})
+                        Document(page_content=s, metadata={id_key: img_ids[i], "filename":filename})
                             for i, s in enumerate(image_summaries)
                     ]
                     self.__vectorstore.populate_vector(documents=summary_docs)
@@ -367,7 +370,7 @@ class ChatbotApp:
                     tab_ids = [str(uuid.uuid4()) for _ in tables]
                     session["tab_ids"] = tab_ids
                     table_docs = [
-                        Document(page_content=s, metadata={id_key: tab_ids[i]})
+                        Document(page_content=s, metadata={id_key: tab_ids[i], "filename":filename})
                             for i, s in enumerate(table_summaries)
                     ]
                     self.__vectorstore.populate_vector(documents=table_docs)
@@ -376,6 +379,7 @@ class ChatbotApp:
                 self._save_image_to_db() # Save the images to the db 
                 self._save_table_to_db()
                 unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings used by the vectorstore
+                torch.cuda.empty_cache() # to remove the model used by the unstructured module 
                 # Update Session State
                 session["embeddings_ready"] = True
                 session["saved"] = True
@@ -574,6 +578,7 @@ class ChatbotApp:
                         self.render_multi_modal_response(response=response,container=container)
                         # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
                 except Exception as e:
+                    print(e)
                     self.logger.error("An error occured: {e}")
                     st.error(f"An error occurred: {e}")
 
@@ -658,75 +663,104 @@ class ChatbotApp:
     def render_multi_modal_response(self, response:Dict, container= None):
         """Renders the chat message for images and text when dicussing with pdf"""
         # Get the text first 
+        session = st.session_state.sessions[st.session_state.current_session_id]
+        saved = session.get("saved")
         with container.chat_message("ai"):
-            session = st.session_state.sessions[st.session_state.current_session_id]
             filename = session.get("filename", "unknown")
             if "response" in response:
                 st.write(response["response"])
+            
             if "context" in response and "texts" in response["context"]:
-                    st.write("**Relevant citations within the document:**")
-                    data = []
-                    for text in response["context"]["texts"]:
-                        metadata = text.metadata
-
-                        # Extract metadata details
-                        page = metadata.get("page", "Unknown")
-                        chunk = metadata.get("chunk", "Unknown")
-                        source = metadata.get("source", "Unknown")
-                        # Append metadata to the list
-                        if all([page != "Unknown", chunk != "Unknown", source != "Unknown"]):
-                            data.append({
-                                "Filename": filename,
-                                "Page": page,
-                                "Chunk": chunk,
-                                "Source (Excerpt)": source 
-                            })
-
-                    # Convert to DataFrame and display it
-                    df = pd.DataFrame(data)
-                    st.write(df)
-
-            # Finally the images
-            saved = session.get("saved")
-            if not saved:
                 st.markdown(
                     """
                     <style>
-                    .custom-image img {
-                        width: 35% !important;
-                        height: auto;
-                        display: block;
-                        margin-left: auto;
-                        margin-right: auto;
+                    .custom-table table {
+                        width: 100%!important;
+                        border-collapse: collapse;
+                    }
+                    .custom-table th, 
+                    .custom-table td {
+                        border: 1px solid black;
+                        padding: 5px;
                     }
                     </style>
                     """,
                     unsafe_allow_html=True
                 )
+                
+                data = []
+                tab_data = []
+                tab_ids = set(st.session_state.table_data.keys())
+                for text in response["context"]["texts"]:
+                    if isinstance(text, Document): # Documents thus texts and doc_ids pointing towards the table information 
+                        metadata = text.metadata
+                        if metadata.get("doc_id") not in tab_ids:
+                            # Extract metadata details
+                            page = metadata.get("page", "Unknown")
+                            chunk = metadata.get("chunk", "Unknown")
+                            source = metadata.get("source", "Unknown")
+                            # Append metadata to the list
+                            if all([page != "Unknown", chunk != "Unknown", source != "Unknown"]):
+                                data.append({
+                                    "Filename": filename,
+                                    "Page": page,
+                                    "Chunk": chunk,
+                                    "Source (Excerpt)": source 
+                                })
+                        else:
+                            doc_id = metadata.get("doc_id", None)
+                            tab_data.append(st.session_state.table_data.get(doc_id)) # retrieve the table_html data from the db 
+                        
+                    elif isinstance(text, str): # STRING means we have the table in html format ex : <table><thead><tr><th> this is the case when the pdf is not saved
+                        tab_data.append(text)
+                        
+                 # Convert to DataFrame and display it
+                if data : 
+                    st.write("**Relevant citations within the document:**")
+                    df = pd.DataFrame(data)
+                    st.write(df)
+                if tab_data:
+                    st.write("**Relevant tables present the document:**")
+                    for table_html in tab_data:
+                        st.markdown('<div class="custom-table">', unsafe_allow_html=True)
+                        st.markdown(table_html, unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+            # Finally the images
+            st.markdown(
+                """
+                <style>
+                .custom-image img {
+                    width: 35% !important;
+                    height: auto;
+                    display: block;
+                    margin-left: auto;
+                    margin-right: auto;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            if not saved:
                 if "context" in response and "images" in response["context"] and len(response["context"]["images"]) > 0:
-                        st.write("**Relevant images within the document:**")
-                        for image in response["context"]["images"]:
-                            image_data = self.pdf_reader.base64_to_image(image)
-                            st.markdown('<div class="custom-image">', unsafe_allow_html=True)
-                            st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
-                            st.markdown("</div>", unsafe_allow_html=True)
+                    st.write("**Relevant images within the document:**")
+                    for image in response["context"]["images"]:
+                        image_data = self.pdf_reader.base64_to_image(image)
+                        st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                        st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
+                        st.markdown("</div>", unsafe_allow_html=True)
             else:
+                st.write("**Relevant images within the document:**")
                 # Retrieve the doc_id from the response["context"]["texts"]
                 doc_ids = set([doc.metadata.get("doc_id") for doc in response["context"]["texts"]])
                 # Retrieve the corresponding image location from the db based on the doc_ids
-
-                files = []
                 for doc_id in doc_ids.intersection(st.session_state.image_data.keys()):
                     file_path = st.session_state.image_data[doc_id]
                     if file_path:
-                        files.append(file_path)
-                
-                for img in files:
-                    st.markdown('<div class="custom-image">', unsafe_allow_html=True)
-                    st.image(img, width=450, caption=f"Image from the article : {filename}", use_container_width=False)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-
+                        st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                        st.image(file_path, width=450, caption=f"Image from the article : {filename}", use_container_width=False)
+                        st.markdown("</div>", unsafe_allow_html=True)
+            
     def display_pdf(self,file,width:int):  # Solution : https://discuss.streamlit.io/t/display-pdf-in-streamlit/62274 
         if st.session_state.sessions[st.session_state.current_session_id]:
             bytes_data = file.getvalue()
@@ -853,7 +887,11 @@ class ChatbotApp:
                     if chat_type == 2 and len(st.session_state["llm_instances"][chat_type]) > 0:  # PDF chat models (Multiple instances)
                         for _ , model in instances.items():
                             if model:
-                                model.llm.unload_model()
+                                if model.llm.model == "llama3.2:3b":
+                                    model.llm.unload_model()
+                                    unload_model(logger=self.logger, model_name="nomic-embed-text:latest")
+                                else:
+                                    model.llm.unload_model()
                     elif instances:  # Chatbot models (Single instance)
                         instances.llm.unload_model()
 

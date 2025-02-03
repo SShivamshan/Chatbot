@@ -2,8 +2,8 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#       check the ouput response and render 
-#       Make the template for the rag prompt better
+#       unexpected '{' in field name
+#       when the we send another message it seems that the chat history gets nothing. 
 #       Correct the agent and add it as the third component
 #       Create a script for the ollama server
 #       Create a method to ensure security for the app.db

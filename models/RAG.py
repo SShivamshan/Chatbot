@@ -68,21 +68,18 @@ class RAG(BaseModel):
                     {"response": message["content"] if message["role"] == "AI" else ""}
                 )
 
-    def summarize_chat_history(self, chat_history: List[Dict[str, Any]]) -> str:
+    def summarize_chat_history(self, chat_history: List[str]) -> str:
         """ 
         Summarizes the chat history using a language model to condense past conversations. 
         """
-        formatted_history = "\n".join(
-            [f"User: {entry['question']}" if 'question' in entry else "" +
-            f"AI: {entry['response']}" if 'response' in entry else "" 
-            for entry in chat_history]
-        )
+        if not chat_history:
+            return ""
         
         summarize_prompt = f"""Summarize the following conversation briefly. 
                                 Respond only with the summary, no additional comment. 
                                 Do not start your message by saying 'Here is a summary' or anything like that.
                                 
-                                {formatted_history}
+                                {chat_history}
                                 """
         summarized_history = self.llm._call(summarize_prompt)
         return summarized_history
@@ -105,20 +102,39 @@ class RAG(BaseModel):
         docs_by_type = kwargs.get("context", {})
         user_question = kwargs.get("question", "")
         chat_history = kwargs.get("chat_history", "")
-        working_history = chat_history
 
-        if len(chat_history) > 6: # Summarize chat history
-            working_history = self.summarize_chat_history(chat_history=chat_history)
+        formatted_history = "\n".join(
+            [f"User: {entry['question']}" if 'question' in entry else f"AI: {entry['response']}" 
+            for entry in chat_history if 'question' in entry or 'response' in entry]
+        )
+
+        # Summarize if too long
+        working_history = (
+            self.summarize_chat_history(chat_history=formatted_history) 
+            if len(chat_history) > 6 else formatted_history
+        )
 
         context_text = ""
         # Verify if the texts are just str or Document instances
         if "texts" in docs_by_type and docs_by_type["texts"]:
-            if isinstance(docs_by_type["texts"],str): # Just the table 
-                context_text += f" Table info : {docs_by_type['texts']} \n" 
-            elif isinstance(docs_by_type["texts"],Document):
-                for text_element in docs_by_type["texts"]:
-                    context_text += text_element.page_content + "\n"
+            table_texts = []
+            document_texts = []
 
+            for text in docs_by_type["texts"]:
+                if isinstance(text, Document):
+                    document_texts.append(text.page_content)
+                else:  # Assume all raw text represents tables
+                    table_texts.append(text)
+            if table_texts:
+                context_text += f"**Table Info:**"
+                for table in table_texts:
+                    context_text += f"\n{table}\n\n" 
+            
+            if document_texts:
+                context_text +=  f"**Extracted Document content:**"
+                for texts in document_texts:
+                    context_text += f"\n{texts}\n"
+        
         template_variables = {
             "context": context_text,
             "question": user_question,
@@ -204,15 +220,16 @@ class RAG(BaseModel):
         # Load prior chat memory
         if chat_id:
             self.load_chat_memory(chat_id)
+
         rag_chain = self.initialize_rag()
         chat_memory = self.memory.load_memory_variables({})
+
         input_data = {
             "question": query,
             "chat_history": chat_memory.get("chat_history", []), 
         }
         response = rag_chain.invoke(input_data)
         response_text = response if isinstance(response, str) else response.get("response", str(response))
-
         self.memory.save_context({"question": query}, {"response": response_text}) # Solution : https://cheatsheet.md/langchain-tutorials/langchain-memory 
         return response 
 
