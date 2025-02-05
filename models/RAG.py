@@ -1,17 +1,17 @@
 from typing import List, Optional, Dict,Any
 from pydantic import BaseModel, Field
 from langchain.memory import ConversationBufferMemory
-from langchain.prompts import ChatPromptTemplate
+from langchain.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.messages import HumanMessage
-from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough,RunnableLambda
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.schema import Document
 from models.Model import Chatbot
 from pages.data_db import ChatDataManager
-from src.utils import load_ai_template
+from src.utils import load_ai_template, CustomRetriever, deduplicate, LineListOutputParser
 from base64 import b64decode
+from langchain.retrievers.multi_vector import MultiVectorRetriever
 
 class RAG(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -67,8 +67,17 @@ class RAG(BaseModel):
                     {"question": message["content"] if message["role"] == "User" else ""},
                     {"response": message["content"] if message["role"] == "AI" else ""}
                 )
+    def build_query_prompt(self, config_path="config/config.yaml"):
+        templates = load_ai_template(config_path)
+        query_template = templates["Prompt_templates"]["Query_templates"]["template"]
+        
+        template_variables = [var["name"] for var in templates["Prompt_templates"]["Query_templates"].get("input_variables", [])]
 
-    def summarize_chat_history(self, chat_history: List[str]) -> str:
+        QUERY_PROMPT = PromptTemplate(input_variables=template_variables, template=query_template)
+
+        return QUERY_PROMPT
+
+    def summarize_chat_history(self, chat_history: str ) -> str:
         """ 
         Summarizes the chat history using a language model to condense past conversations. 
         """
@@ -103,17 +112,9 @@ class RAG(BaseModel):
         user_question = kwargs.get("question", "")
         chat_history = kwargs.get("chat_history", "")
 
-        formatted_history = "\n".join(
-            [f"User: {entry['question']}" if 'question' in entry else f"AI: {entry['response']}" 
-            for entry in chat_history if 'question' in entry or 'response' in entry]
-        )
-
         # Summarize if too long
-        working_history = (
-            self.summarize_chat_history(chat_history=formatted_history) 
-            if len(chat_history) > 6 else formatted_history
-        )
-
+        working_history =  self.summarize_chat_history(chat_history=chat_history) if len(chat_history) > 2048 else chat_history
+        
         context_text = ""
         # Verify if the texts are just str or Document instances
         if "texts" in docs_by_type and docs_by_type["texts"]:
@@ -126,15 +127,15 @@ class RAG(BaseModel):
                 else:  # Assume all raw text represents tables
                     table_texts.append(text)
             if table_texts:
-                context_text += f"**Table Info:**"
+                context_text += f"context"
                 for table in table_texts:
                     context_text += f"\n{table}\n\n" 
             
             if document_texts:
-                context_text +=  f"**Extracted Document content:**"
+                context_text +=  f"context"
                 for texts in document_texts:
                     context_text += f"\n{texts}\n"
-        
+
         template_variables = {
             "context": context_text,
             "question": user_question,
@@ -173,15 +174,23 @@ class RAG(BaseModel):
         return {"images": b64, "texts": text}
 
     def initialize_rag(self):
+        multi_query_retriever = None
+        QUERY_PROMPT = self.build_query_prompt()
+        output_parser = LineListOutputParser()
+        llm_chain = QUERY_PROMPT | self.llm | output_parser
         
-        multi_query_retriever = MultiQueryRetriever.from_llm(
-            retriever=self.multi_retriever, # we use the mutlimodal retriever as the retiever to retieve all related form of results
-            llm=self.llm,
-        )
-        # return multi_query_retriever
+        if isinstance(self.multi_retriever, MultiVectorRetriever):
+            multi_query_retriever = MultiQueryRetriever(
+                retriever=self.multi_retriever, llm_chain=llm_chain, parser_key="lines"
+            ) 
+        elif isinstance(self.multi_retriever,CustomRetriever):
+            multi_query_retriever = MultiQueryRetriever(
+                retriever=self.multi_retriever, llm_chain=llm_chain, parser_key="lines"
+            )  # "lines" is the key (attribute name) of the parsed output
+
         try:
             retrieval_pipeline = {
-                "context": multi_query_retriever | RunnableLambda(self.parse_docs),
+                "context": multi_query_retriever | RunnableLambda(lambda docs: deduplicate(docs)) | RunnableLambda(self.parse_docs),
                 "question": RunnablePassthrough(),
                 "chat_history": RunnableLambda(lambda _: self.memory.load_memory_variables({}).get("chat_history", "")), 
             } | RunnablePassthrough().assign(
@@ -199,38 +208,60 @@ class RAG(BaseModel):
     async def arun(self, query: str, chat_id: str = None) -> Dict:
         """Execute the RAG pipeline asynchronously."""
         # Load prior chat memory
-        if chat_id:
+        if chat_id and not self.memory.load_memory_variables({}).get("chat_history", []):
             self.load_chat_memory(chat_id)
 
         rag_chain = self.initialize_rag()
-        
+        if not rag_chain:
+            return {"response": "Unable to initialize the retrieval pipeline."}
+
+        chat_memory = self.memory.load_memory_variables({})
+
         input_data = {
             "question": query,
-            "chat_history": self.memory.load_memory_variables({}).get("chat_history", ""), 
+            "chat_history": chat_memory.get("chat_history", []),
         }
         
-        response = await rag_chain.ainvoke(input_data)
-        response_text = response if isinstance(response, str) else response.get("response", str(response))
+        try:
+            # Generate response
+            response = await rag_chain.ainvoke(input_data)
+            response_text = response.get("response", str(response)) if isinstance(response, dict) else str(response)
+            self.memory.save_context({"question": query}, {"response": response_text})
 
-        self.memory.save_context({"question": query}, {"response": response_text}) 
+        except Exception as e:
+            response_text = f"Error during processing: {str(e)}"
+        if "chat_history" in response:
+            response.pop("chat_history", None)
+
         return response
 
     def run(self, query:str, chat_id: str = None) -> Dict:
         """Execute the RAG pipeline synchronously."""
         # Load prior chat memory
-        if chat_id:
+        if chat_id and not self.memory.load_memory_variables({}).get("chat_history", []):
             self.load_chat_memory(chat_id)
 
         rag_chain = self.initialize_rag()
-        chat_memory = self.memory.load_memory_variables({})
+        if not rag_chain:
+            return {"response": "Unable to initialize the retrieval pipeline."}
 
+        chat_memory = self.memory.load_memory_variables({})
         input_data = {
             "question": query,
-            "chat_history": chat_memory.get("chat_history", []), 
+            "chat_history": chat_memory.get("chat_history", []),
         }
-        response = rag_chain.invoke(input_data)
-        response_text = response if isinstance(response, str) else response.get("response", str(response))
-        self.memory.save_context({"question": query}, {"response": response_text}) # Solution : https://cheatsheet.md/langchain-tutorials/langchain-memory 
-        return response 
+
+        try:
+            # Generate response
+            response = rag_chain.invoke(input_data)
+            response_text = response.get("response", str(response)) if isinstance(response, dict) else str(response)
+            self.memory.save_context({"question": query}, {"response": response_text})
+
+        except Exception as e:
+            response_text = f"Error during processing: {str(e)}"
+        if "chat_history" in response:
+            response.pop("chat_history", None)
+
+        return response
 
         

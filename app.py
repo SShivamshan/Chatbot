@@ -165,8 +165,9 @@ class ChatbotApp:
             if st.session_state.current_session_id:
                 # Offload the model from the current chat type when switching to sessions with different chat types
                 chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
-                if chat_type == 2 and len(st.session_state.llm_instances[chat_type]) != 0 : 
-                    st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
+                if chat_type == 2 and st.session_state.llm_instances.get("chat_type", None):
+                    if len(st.session_state.llm_instances[chat_type]) > 0:
+                        st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
                 elif chat_type in [0,1] and len(st.session_state.llm_instances) != 0:
                     st.session_state.llm_instances[chat_type].llm.unload_model()
                 self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force=True)
@@ -295,22 +296,64 @@ class ChatbotApp:
         """
         Render the settings popover when the settings button is clicked.
         """
-        if st.session_state.logged_in:
-            st.markdown("<h2>Settings</h2>", unsafe_allow_html=True)
-            st.write("Here you can configure the chatbot settings.")
+        general_tab, session_tab, other_tab = st.tabs(["Home", "Session", "Other"])
+        with general_tab:
+            st.header("General Settings")
+            # Deleting chat history for this account
+            # Log out of this account or delete this account
+            # Change the localhost if there's a need to change 
+
+        if st.session_state.active_page == "chat":
+            with session_tab:
+                st.markdown("<h2>Session settings</h2>", unsafe_allow_html=True)
+                st.write("Here you can configure the chatbot settings.")
+                params = {}
+                model_name = None
+                # Placeholder settings options
+                chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
+                model_choice = st.session_state.llm_instances.get(chat_type, None)
+                if model_choice is None:
+                    st.warning("Choose a model before setting it's parameters.")
+                else:
+                    if isinstance(model_choice, dict):
+                        model_name = model_choice[st.session_state.current_session_id].llm.model
+                    else:
+                        model_name = model_choice.llm.model
+                        
+                    st.write(f"### Current Model Chosen: `{model_name}`")
+
+                params = get_ollama_model_details(model_name=model_name) 
+                if params:
+                    # Read-only model parameters
+                    st.markdown("### Model Details (Read-Only)")
+                    col1, col2 = st.columns(2)  
+                    with col1:
+                        st.text_input("Architecture", params["architecture"], disabled=True)
+                        st.text_input("Parameters", params["parameters"], disabled=True)
+                    with col2:
+                        st.text_input("Embedding Length", params["embedding_length"], disabled=True)
+                        st.text_input("Quantization", params["quantization"], disabled=True)
+
+                    # Editable parameter (context length)
+                    st.markdown("### Modify Model Settings")
+                    context_length = st.number_input(
+                        "Context Length", min_value=100, max_value=params["context_length"], value=min(self._context_length, params["context_length"])
+                    )
+
+                temperature = st.slider("Temperature",min_value=0, max_value=10)
+
+                if st.button("Submit",key='Submit'):
+                    st.session_state.chat_settings = {
+                        "context_length": context_length,
+                        "temperature": temperature,
+                        "model_name": model_name,
+                    }
+                    st.success("Settings updated successfully!")
+                    st.rerun()
+        with other_tab:
+            st.header("Other")
+            # API keys for OPENAI, adding new models
             
-            # Placeholder settings options
-            model_choice = st.selectbox("Choose Model", ["Simple Chat", "Chat with pdf", "Machine learning"])
-            context_length = st.slider("Context Length", min_value=10, max_value=100, value=50)
-
-            if st.button("Submit",key='Submit'):
-                st.session_state.chat_settings = {
-                    "model": model_choice,
-                    "context_length": context_length,
-                }
-                st.success("Settings updated successfully!")
-                st.rerun()
-
     @st.dialog("Embeddings saving...")
     def render_embeddings_popup(self, file:str, file_hash:str):
         id_key = "doc_id"
@@ -379,7 +422,7 @@ class ChatbotApp:
                 self._save_image_to_db() # Save the images to the db 
                 self._save_table_to_db()
                 unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings used by the vectorstore
-                torch.cuda.empty_cache() # to remove the model used by the unstructured module 
+                # torch.cuda.empty_cache() # to remove the model used by the unstructured module 
                 # Update Session State
                 session["embeddings_ready"] = True
                 session["saved"] = True
@@ -499,6 +542,8 @@ class ChatbotApp:
                     vectorstore=self.__vectorstore.vector_store,
                     docstore=docstore,
                     id_key=id_key,
+                    search_type="similarity_score_threshold",
+                    search_kwargs={"score_threshold": 0.19, "k" : 5},
                 )
                 if session.get("tables"):
                     retriever.docstore.mset(list(zip(session["tab_ids"], session["tables"])))
@@ -511,18 +556,13 @@ class ChatbotApp:
                 llm = RAG(multi_retriever=retriever, chatbot=chatbot, chat_data_manager=self.account_page.chats)
             elif saved and not embeddings_ready:
                 # print("no docstore")
-                collection_size = self.__vectorstore.collection.count()
-                retriever = self.__vectorstore.vector_store.as_retriever(
-                    search_type="mmr",
-                    search_kwargs={"k": 5, "fetch_k": collection_size}
-                )
-                llm = RAG(multi_retriever=retriever, chatbot=chatbot , chat_data_manager=self.account_page.chats)
+                custom_retriever = CustomRetriever(vectorstore=self.__vectorstore.vector_store)
+                llm = RAG(multi_retriever=custom_retriever, chatbot=chatbot , chat_data_manager=self.account_page.chats)
 
             return llm
 
         elif chat_type == 0:  # Simple chat
             # Create a new instance
-            # chatbot = Chatbot(base_url=self._base_url, model=self._model, context_length=self._context_length)
             memory = ConversationBufferMemory(return_messages=True)
             llm = ConversationChain(llm=chatbot, memory=memory)
             return llm
@@ -533,7 +573,6 @@ class ChatbotApp:
           
     def handle_input(self,chat_type : int = 0, container = None):
         """Handles user input."""
-
         if chat_type == 0:  # Simple chat
             user_input = st.chat_input(placeholder="Ask me anything...",key="0")
             
@@ -664,7 +703,6 @@ class ChatbotApp:
         """Renders the chat message for images and text when dicussing with pdf"""
         # Get the text first 
         session = st.session_state.sessions[st.session_state.current_session_id]
-        saved = session.get("saved")
         with container.chat_message("ai"):
             filename = session.get("filename", "unknown")
             if "response" in response:
@@ -709,7 +747,7 @@ class ChatbotApp:
                                 })
                         else:
                             doc_id = metadata.get("doc_id", None)
-                            tab_data.append(st.session_state.table_data.get(doc_id)) # retrieve the table_html data from the db 
+                            tab_data.append(st.session_state.table_data.get(doc_id)) # retrieve the table_html data from the db this means the pdf content is saved 
                         
                     elif isinstance(text, str): # STRING means we have the table in html format ex : <table><thead><tr><th> this is the case when the pdf is not saved
                         tab_data.append(text)
@@ -741,25 +779,27 @@ class ChatbotApp:
                 """,
                 unsafe_allow_html=True
             )
-            if not saved:
-                if "context" in response and "images" in response["context"] and len(response["context"]["images"]) > 0:
-                    st.write("**Relevant images within the document:**")
-                    for image in response["context"]["images"]:
-                        image_data = self.pdf_reader.base64_to_image(image)
-                        st.markdown('<div class="custom-image">', unsafe_allow_html=True)
-                        st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
-                        st.markdown("</div>", unsafe_allow_html=True)
-            else:
+
+            if "context" in response and "images" in response["context"] and len(response["context"]["images"]) > 0:
                 st.write("**Relevant images within the document:**")
+                for image in response["context"]["images"]:
+                    image_data = self.pdf_reader.base64_to_image(image)
+                    st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                    st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
+                    st.markdown("</div>", unsafe_allow_html=True)
+            else:
                 # Retrieve the doc_id from the response["context"]["texts"]
                 doc_ids = set([doc.metadata.get("doc_id") for doc in response["context"]["texts"]])
-                # Retrieve the corresponding image location from the db based on the doc_ids
-                for doc_id in doc_ids.intersection(st.session_state.image_data.keys()):
-                    file_path = st.session_state.image_data[doc_id]
-                    if file_path:
-                        st.markdown('<div class="custom-image">', unsafe_allow_html=True)
-                        st.image(file_path, width=450, caption=f"Image from the article : {filename}", use_container_width=False)
-                        st.markdown("</div>", unsafe_allow_html=True)
+                intersected_doc_ids = doc_ids.intersection(st.session_state.image_data.keys())
+                if intersected_doc_ids:
+                    st.write("**Relevant images within the document:**")
+                    # Retrieve the corresponding image location from the db based on the doc_ids
+                    for doc_id in intersected_doc_ids:
+                        file_path = st.session_state.image_data[doc_id]
+                        if file_path:
+                            st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                            st.image(file_path, width=450, caption=f"Image from the article : {filename}", use_container_width=False)
+                            st.markdown("</div>", unsafe_allow_html=True)
             
     def display_pdf(self,file,width:int):  # Solution : https://discuss.streamlit.io/t/display-pdf-in-streamlit/62274 
         if st.session_state.sessions[st.session_state.current_session_id]:

@@ -13,14 +13,14 @@ class Chatbot(ChatOllama):
     context_length: int = Field(None,alias='context_length')
     logger: logging.Logger = Field(None, alias='logger')
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 25000 ):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 18000 ):
         """
         A chatbot class leveraging Ollama's local LLMs (llama3.2:3b, )
 
         Args:
             base_url (str): The local Ollama server URL.
             model (str): The name of the model to use (e.g., 'llama3.2:3b').
-            context_length (int): Maximum context length for the chatbot set to 25000 for performance reasons on personnal computer.
+            context_length (int): Maximum context length for the chatbot set to 18000 for performance reasons on personnal computer.
         """
         super(Chatbot,self).__init__()
         self.base_url = base_url
@@ -133,11 +133,24 @@ class Chatbot(ChatOllama):
     def _llm_type(self) -> str:
         """
         Return the type of LLM being used. Such as llama3.2 would be only for text based answers and 
-        llava3.2 would be for image-based and text-based answers especially for RAG. 
+        llava3.2 would be for image-based summaries.  
 
         Returns:
             str: The LLM type ("ollama" or "llava").
         """
         return self.model
+    
+    @property
+    def llm_properties(self) -> dict:
+        """
+        Return the properties of the LLM.
+
+        Returns:
+            dict: Properties of the LLM.
+        """
+        return {
+            "type": self._llm_type,
+            "identifying_params": self._identifying_params
+        }
 
 

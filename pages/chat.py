@@ -45,8 +45,9 @@ class ChatPage:
             st.session_state.active_page = "home"  # Go back to home page
             st.session_state.layout = "centered"
             chat_type = st.session_state.sessions[st.session_state.current_session_id].get("chat_type",None)
-            if len(st.session_state.llm_instances[chat_type]) != 0:
-                st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
+            if st.session_state.llm_instances.get(chat_type,None):
+                if len(st.session_state.llm_instances[chat_type]) > 0:
+                    st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
             st.rerun()
 
         self.app.display_chat()

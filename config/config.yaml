@@ -78,7 +78,7 @@ Prompt_templates:
         {question}
         ---
         ### **Answer Format**
-        The response is structured as follows:
+        The response is structured as follows. The Answer format starts with "The response is ":
 
         1. **Reasoning Framework**
             - **Contextual Analysis:** Systematically break down the key elements of the question in relation to the provided context.
@@ -88,7 +88,8 @@ Prompt_templates:
         2. **Comprehensive Answer**
             - **Primary Response:** Provide a detailed, precise answer that directly addresses the question.
             - **Depth of Explanation:** 
-              * Use mathematical notation with $$ tags for equations (e.g., $$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$)
+              * Use mathematical notation with $$ tags for equations (e.g., $$x = \frac{{-b \pm \sqrt{{b^2 - 4ac}}}}{{2a}}$$)
+              * Use code notation with `` tags for code points (e.g., `` def(x) : lambda x:x ``
               * Include relevant formulas, derivations, or computational steps
               * Clarify complex concepts with additional context
             - **Structural Breakdown:** 
@@ -125,7 +126,7 @@ Prompt_templates:
 
         2. **Comprehensive Answer**
             - Detailed explanation of the topic
-            - Mathematical representation, e.g., $$f(x) = \int_{a}^{b} g(x) dx$$
+            - Mathematical representation, e.g., $$f(x) = \int_{{a}}^{{b}} g(x) dx$$
             - Clear, structured breakdown of key points
 
         3. **Contextual Documentation**
@@ -147,21 +148,21 @@ Prompt_templates:
           description: The question to be answered
           is_required: true
 
-    Query_templates :
+    Query_templates:
       name: "Query Templates"
-      template : | 
-          Consider the user's question and the conversation history. Each query MUST tackle the question from a different viewpoint, we want to get a variety of RELEVANT search results.
-          By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
-          
-          Provide these alternative questions separated by newlines.
-          
-          Original question: {question}
-          Chat history: {chat_history}
-
-      input_variables : 
+      template: |
+        Generate multiple search query variations that capture different semantic angles of the original question. 
+        
+        Rules:
+        - Create 3-5 semantically distinct but relevant query variations
+        - Focus on extracting diverse perspectives
+        - Consider technical, contextual, and exploratory angles
+        - Avoid redundancy
+        
+        Original Question: {question}
+        
+        Query Variations:
+      input_variables:
         - name: question
           description: The user's original question
-          is_required: true
-        - name: chat_history
-          description: The conversation history of the current conversation (could be summarized)
           is_required: true

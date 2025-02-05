@@ -2,31 +2,33 @@
 import os
 import logging
 import uuid
+import json
 import hashlib
-from typing import List, Dict, Optional
+import requests
+from typing import List, Dict, Optional, Union
 from io import BytesIO
 import tempfile
 from typing import Any
 import subprocess
+from collections import defaultdict
 
 # Third-party library imports
 import yaml
 from PIL import Image
 import chromadb
-from pydantic import Field
+from pydantic import Field, BaseModel
 from PyPDF2 import PdfReader
 
 
 # LangChain imports
 from langchain.docstore.document import Document
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain.tools import BaseTool
 from langchain_chroma import Chroma
-from langchain.storage import InMemoryStore
-from langchain.retrievers.multi_vector import MultiVectorRetriever
+from langchain.schema import BaseRetriever
 
 # Unstructured library imports
 from unstructured.partition.pdf import partition_pdf
@@ -92,7 +94,7 @@ def get_pdf_title(pdf_path) -> str:
 
     params
     ------ 
-        pdf_path (str): Path to the PDF file
+        - pdf_path (str): Path to the PDF file
     
     returns
     -------
@@ -106,10 +108,10 @@ def get_pdf_title(pdf_path) -> str:
     return title or "No title found"
 
 
-def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434"): # Solution : https://github.com/ollama/ollama/issues/1600 
+def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434"): # Solution : https://github.com/ollama/ollama/issues/1600
     """
     Unload the given model from memory by calling the Ollama API.
-    
+
     params
     ------
         - logger (Logger): Logger object for logging messages
@@ -133,6 +135,123 @@ def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434
     except Exception as e:
         logger.exception(f"Unexpected error: {e}")
 
+class LineListOutputParser(BaseOutputParser[List[str]]):
+    """Output parser for a list of lines."""
+
+    def parse(self, text: str) -> List[str]:
+        lines = text.strip().split("\n")
+        return list(filter(None, lines)) 
+
+# Solution : https://github.com/langchain-ai/langchain/issues/6046 , https://github.com/rajib76/langchain_examples/blob/main/examples/how_to_execute_retrievalqa_chain.py 
+class CustomRetriever(BaseRetriever, BaseModel):
+    vectorstore: Optional[Any] = Field(default=None)
+    
+    class Config:
+        arbitrary_types_allowed = True
+
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """
+        Retrieves the relevant documents with a associated scores for each document.
+
+        params
+        ------
+            - query (str): Query string to search for.
+
+        returns
+        -------
+            List[Tuple[Document, float]]: A list of tuples, each containing a Document and its corresponding score.
+        
+        """
+        # Perform the similarity search (retrieve more than 5 to ensure top 5 selection)
+        docs, scores = zip(*self.vectorstore.similarity_search_with_relevance_scores(query, k=10, score_threshold=0.19))
+        
+        # Pair documents with their scores
+        docs_with_scores = list(zip(docs, scores))
+        top_docs_with_scores = sorted(docs_with_scores, key=lambda x: x[1], reverse=True)[:5]
+    
+        for doc, score in top_docs_with_scores:
+            doc.metadata["score"] = score
+        
+        # Return only the top 5 highest-scoring documents
+        return [doc for doc, _ in top_docs_with_scores]
+    
+    async def _aget_relevant_documents(self, query: str) -> List[Document]:
+        return self._get_relevant_documents(query)
+    
+def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Document, str]]:
+    """
+    Deduplicates retrieved documents (instances of Document), keeping only the highest-scoring version of each,
+    and selects the top `k` documents. In addition, any strings present in the input are returned unmodified.
+
+    params
+    ------
+        - docs (List[Union[Document, str]]): List of retrieved items which may include Documents with metadata (including scores)
+                                            and strings.
+        - k (int): Number of top-scoring unique Document objects to return. Default is 10.
+
+    returns
+    -------
+        List[Union[Document, str]]: A list containing the top `k` unique Documents (sorted by highest score) 
+                                    plus any strings that were present in the original list.
+    """
+    # Separate Document instances and strings
+    document_items = []
+    string_items = []
+    for item in docs:
+        if isinstance(item, Document):
+            document_items.append(item)
+        elif isinstance(item, str):
+            string_items.append(item)
+        else:
+            # Optionally, you could raise an error or simply ignore unknown types.
+            pass
+
+    # Deduplicate Document objects based on their 'doc_id' or a fallback unique attribute
+    doc_score_map = defaultdict(lambda: float('-inf'))  # Maps doc_id to the highest score seen.
+    doc_map = {}  # Maps doc_id to the best Document instance.
+    for doc in document_items:
+        # Use metadata 'doc_id' if available, otherwise fall back to doc.id
+        doc_id = doc.metadata.get("doc_id", getattr(doc, "id", None))
+        if doc_id is None:
+            continue  # or decide to include these items without deduplication
+
+        score = doc.metadata.get("score", 0)
+        if score > doc_score_map[doc_id]:
+            doc_score_map[doc_id] = score
+            doc_map[doc_id] = doc
+
+    # Get top `k` highest-scoring unique Documents
+    sorted_docs = sorted(doc_map.values(), key=lambda d: d.metadata.get("score", 0), reverse=True)[:k]
+
+    # Return both the deduplicated/sorted Document objects and the strings.
+    return sorted_docs + string_items
+    
+def get_ollama_model_details(model_name: str, url:str = "http://localhost:11434/api/show"):
+    payload = {"model": model_name}
+    
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()  # Raise error if request fails
+        
+        data = response.json()  # Parse JSON response
+        
+        # Extract required parameters
+        model_details = {
+            "architecture": data["model_info"].get("general.architecture", "N/A"),
+            "parameters": f'{data["details"].get("parameter_size", "N/A")}',
+            "context_length": data["model_info"].get("llama.context_length", "N/A"),
+            "embedding_length": data["model_info"].get("llama.embedding_length", "N/A"),
+            "quantization": data["details"].get("quantization_level", "N/A")
+        }
+        
+        return model_details
+
+    except requests.exceptions.RequestException as e:
+        logging.exception("HTTP Request failed:", e)
+        return None
+    except json.JSONDecodeError:
+        logging.error("Failed to decode JSON response.")
+        return None
 
 # Adopted solution : https://medium.com/@arunpatidar26/rag-chromadb-ollama-python-guide-for-beginners-30857499d0a0 
 class ChromaDBEmbeddingFunction:
@@ -378,7 +497,28 @@ class PDF_Reader:
         )
         self.logger = logging.getLogger(__name__)
 
-    def read_pdf(self,filename:BytesIO):
+    def read_pdf(self, filename: BytesIO):
+        """
+        Read and partition a PDF file into chunks. It extracts tables, images, and text with specific chunking strategies.
+
+        params
+        ------
+            filename (BytesIO): A BytesIO object containing the PDF file to be read and partitioned.
+
+        returns
+        -------
+            List (CompositeElement or None): A list of CompositeElement objects representing the partitioned PDF content. 
+            Returns None if an error occurs during the partitioning process.
+
+        raises
+        ------
+            AssertionError : If the input file is not a PDF (doesn't end with '.pdf').
+
+        notes
+        -----
+        The function uses a temporary file to store the PDF content before processing.
+        The temporary file is deleted after the partitioning is complete.
+        """
         assert filename.name.endswith('.pdf'), "Given file should be a .pdf"
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
                 temp_file.write(filename.read())
@@ -400,7 +540,7 @@ class PDF_Reader:
             )
             os.remove(temp_filename)
             return chunks
-        
+
         except Exception as e:
             self.logger.error("Failed to partition PDF file %s", e)
             return None
