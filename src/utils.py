@@ -1,5 +1,6 @@
 # Standard library imports
 import os
+import re
 import logging
 import uuid
 import json
@@ -18,6 +19,7 @@ from PIL import Image
 import chromadb
 from pydantic import Field, BaseModel
 from PyPDF2 import PdfReader
+from bs4 import BeautifulSoup, ProcessingInstruction
 
 
 # LangChain imports
@@ -26,13 +28,16 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
-from langchain.tools import BaseTool
+from langchain.tools import BaseTool, StructuredTool, tool
 from langchain_chroma import Chroma
 from langchain.schema import BaseRetriever
+from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 
 # Unstructured library imports
 from unstructured.partition.pdf import partition_pdf
-from unstructured.documents.elements import CompositeElement
+from unstructured.partition.html import partition_html
+from unstructured.documents.elements import CompositeElement,Text
 
 # Local imports
 from models.Model import Chatbot
@@ -49,7 +54,7 @@ def split_chuncks(text:List[CompositeElement],filename:str) -> List[Document]: #
     
     params
     ------
-        text: List[CompositeElement]
+    - text: List[CompositeElement]
 
     returns
     -------
@@ -142,6 +147,10 @@ class LineListOutputParser(BaseOutputParser[List[str]]):
         lines = text.strip().split("\n")
         return list(filter(None, lines)) 
 
+def get_parent_id(element):
+    """Retrieve the parent ID if available, otherwise use its own element ID."""
+    return element["metadata"].get("parent_id", element["element_id"])
+
 # Solution : https://github.com/langchain-ai/langchain/issues/6046 , https://github.com/rajib76/langchain_examples/blob/main/examples/how_to_execute_retrievalqa_chain.py 
 class CustomRetriever(BaseRetriever, BaseModel):
     vectorstore: Optional[Any] = Field(default=None)
@@ -177,6 +186,209 @@ class CustomRetriever(BaseRetriever, BaseModel):
     
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         return self._get_relevant_documents(query)
+
+class CustomSearchTool(BaseTool):
+    name: str = "web_search"
+    description: str = "Useful for when you need to answer questions about current or new information through the web."
+    web_search_tool: Optional[DuckDuckGoSearchResults] = Field(default=None, exclude=True)  
+    wrapper: Optional[DuckDuckGoSearchAPIWrapper] = Field(default=None, exclude=True)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self):
+        super().__init__()
+        # Initialize the wrapper and search tool
+        wrapper = DuckDuckGoSearchAPIWrapper(max_results=25, backend="auto")  # Add list of potential websites in 'source' arg if needed
+        self.web_search_tool = DuckDuckGoSearchResults(api_wrapper=wrapper, output_format="list")
+
+    def _run(self, query: Union[str, list]) -> Union[List[Dict[str, str]], Dict[str, str]]:
+        # Check if the query is a list of strings (e.g., multiple search terms)
+        if isinstance(query, list):
+            results = []
+            for single_query in query:
+                # Handle each query in the list
+                search_results = self.web_search_tool.invoke(single_query)
+                # Extract titles, snippets, and links
+                results.append([
+                    {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
+                    for result in search_results
+                ])
+            return results
+        else:
+            # If the query is a single string, process it directly
+            search_results = self.web_search_tool.invoke(query)
+            return [
+                {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
+                for result in search_results
+            ]
+
+class WebscrapperTool(BaseTool):
+    name :str = "web_scrape"
+    description:str = "Useful for information scrapping for websites"
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self):
+        super().__init__()
+    
+    # Solution : https://github.com/Unstructured-IO/unstructured/issues/3642 
+    def parse_html(self,url:str=None) -> List[Text]:
+        """
+        Use a library like BeautifulSoup to parse HTML from the provided URL and use Unstructured for retreving the elements(chunks).
+
+        params
+        ------
+            - url (str): The URL of the website to scrape.
+
+        returns
+        -------
+            List of unstructured.documents.elements.Text 
+        """
+        try:
+            # Add your code here to use a library like BeautifulSoup to scrape HTML from the provided URL.
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            response.raise_for_status()
+
+            # Use BeautifulSoup to parse the HTML
+            soup = BeautifulSoup(response.text, "lxml")
+
+            # Remove processing instructions
+            for pi in soup.find_all(string=lambda text: isinstance(text, ProcessingInstruction)):
+                pi.extract()
+
+            # Convert cleaned soup back to a string
+            cleaned_html = str(soup)
+            elements = partition_html(text=cleaned_html)
+
+            return elements
+        
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Error communicating with web: {e}")
+    
+
+    def identify_relevant_passages(self, elements: List[Text], keywords: List[str]) -> List[Dict]:
+        """
+        Identify relevant sections from parsed HTML elements using keyword matching.
+
+        params
+        ------
+            - elements (List[Text]): List of parsed elements (title, text, etc.).
+            - keywords (List[str]): List of keywords to search for.
+
+        returns
+        -------
+            - List[Dict]: A list of unique relevant sections, each represented as a dictionary.
+        """
+        relevant_sections = {}
+        processed_texts = set()
+        section_titles = {}
+        position_counters = {}
+        
+        for element in elements:
+            element = element.to_dict()
+            element_type = element["type"]
+            
+            # Store title if the element is a Title
+            if element_type == "Title":
+                section_titles[element["element_id"]] = element["text"]
+            
+            # Only process relevant element types (Title, NarrativeText, ListItem)
+            if element_type in {"Title", "NarrativeText", "ListItem"}:
+                text_lower = element["text"].lower()
+                
+                # Check if any keyword is present in the text
+                if any(keyword in text_lower for keyword in keywords):
+                    parent_id = get_parent_id(element)
+                    
+                    # If it's a NarrativeText, find its corresponding Title's ID
+                    if element_type == "NarrativeText":
+                        section_id = element["metadata"].get("parent_id", parent_id)
+                    else:
+                        section_id = parent_id
+                    
+                    # Determine the section title
+                    section_title = section_titles.get(section_id, "Unknown Title")
+                    
+                    # Initialize section if not already stored
+                    if section_id not in relevant_sections:
+                        relevant_sections[section_id] = {
+                            "section_id": section_id,
+                            "elements": [],
+                            "title": section_title,
+                        }
+
+                    # Only count positions in sections with ListItems
+                    if element_type == "ListItem":
+                        if section_id not in position_counters:
+                            position_counters[section_id] = 0
+                        position_counters[section_id] += 1
+                        position = position_counters[section_id]  
+                    else:
+                        position = None  
+
+                    text_key = (section_id, element["text"])  
+                    if text_key not in processed_texts:
+                        processed_texts.add(text_key)
+                        
+                        # Only store the position if it's a ListItem or if the section contains ListItems
+                        position_info = {}
+                        if element_type == "ListItem":
+                            position_info["position"] = position  # Store relative position if applicable
+                        
+                        relevant_sections[section_id]["elements"].append({
+                            "type": element_type,
+                            "text": element["text"],
+                            "metadata": element["metadata"],
+                            **position_info,  # Merge position information if applicable
+                        })
+
+        return list(relevant_sections.values())  # Return as a list of dictionaries
+
+    def _run(self,query: Union[str, list],url:str=None) -> List[Dict]:
+        
+        elements = self.parse_html(url=url)
+        if query:
+            return self.identify_relevant_passages(elements=elements,keywords=query)
+        else:
+            return self.identify_relevant_passages(elements=elements,keywords=None)
+    
+    def _arun(self):
+        raise NotImplementedError("This tool does not support async")
+
+
+def parse_flags_and_queries(input_text: str) -> dict[str, str]:
+    """
+    Parses the input text to retrieve all flags and their corresponding queries.
+    Flags can appear anywhere in the input, and each flag's query continues until
+    another flag is found or the input ends.
+
+    params
+    ------
+        input_text (str): The raw input string from the user.
+
+    returns
+    -------
+        dict: A dictionary where keys are flags (e.g., '/code') and values are the queries.
+    """
+    # Remove leading/trailing whitespace.
+    input_text = input_text.strip()
+    
+    # Define a pattern that matches flags and their corresponding text.
+    pattern = r"(\/\w+)([^\/]*)"
+    
+    # Find all matches in the input text.
+    matches = re.findall(pattern, input_text)
+    
+    # Create a dictionary to store flags and their queries.
+    flag_query_dict = {}
+    
+    for flag, query in matches:
+        # Clean up the query by stripping extra whitespace.
+        flag_query_dict[flag] = query.strip()
+    
+    return flag_query_dict
+
     
 def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Document, str]]:
     """
@@ -350,101 +562,8 @@ class Vectordb:
             return None
 
 
-class SearchTool(BaseTool):
-    name: str = "SearchRelevantInformation"
-    description: str = "Search the knowledge base for relevant information."
-    vector_db: Optional['Vectordb'] = Field(default=None, exclude=True)
 
-    def __init__(self, retriever:Optional['Vectordb'] = None):
-        super().__init__()
-        if retriever:
-            self.vector_db = retriever  # Assign the passed retriever to vector_db
-        else:
-            vector_store = Vectordb()
-            collection_size = vector_store.collection.count()
-            self.vector_db = vector_store.vector_store.as_retriever(
-                search_type="mmr",
-                search_kwargs={"k": 5, "fetch_k": collection_size}
-            )
-
-    async def _arun(self, query: str) -> str:
-        """Run async implementation"""
-        raise NotImplementedError("SearchTool does not support async")
-    def _run(self, query: str):
-        """
-        Search for relevant information in the vector database and return the formatted result.
-        """
-        # Perform the search using the retriever
-        response = self.vector_db.invoke(query)
-        # Format the results
-        formatted_results = self._format_results(response)
-
-        return formatted_results
-    @staticmethod
-    def _format_results(response: List[tuple]) -> str:
-        """
-        Format the search results by preparing a structured response without scores.
-        """
-        # Parse the response and create a structured list of results
-        parsed_results = []
-        for res in response:
-            parsed_results.append({
-                "Content": res.page_content,
-                "Page": res.metadata.get("page"),
-                "Source": res.metadata.get("source"),
-            })
-        return parsed_results
-
-class CitationTool(BaseTool):
-    name: str = "GenerateCitation"
-    description: str = "Generate a citation from a relevant section or page in the PDF."
-    vector_db: Optional['Vectordb'] = Field(default=None, exclude=True)
-
-    def __init__(self, retriever:Optional['Vectordb'] = None):
-        super().__init__()
-        if retriever:
-            self.vector_db = retriever  # Assign the passed retriever to vector_db
-        else:
-            vector_store = Vectordb()
-            collection_size = vector_store.collection.count()
-            self.vector_db = vector_store.vector_store.as_retriever(
-                search_type="mmr",
-                search_kwargs={"k": 5, "fetch_k": collection_size}
-            )
-
-    async def _arun(self, query: str) -> str:
-        """Run async implementation"""
-        raise NotImplementedError("SearchTool does not support async")
-
-    def _run(self, query: str):
-        """
-        Search for relevant information in the vector database and return the formatted result.
-        """
-        # Perform the search using the retriever
-        response = self.vector_db.invoke(query)
-        # Format the results
-        formatted_results = self._format_results(response)
-
-        return formatted_results
-    
-    @staticmethod
-    def _format_results(response: List[tuple]) -> str:
-        """
-        Format the search results by preparing a structured response without scores.
-        """
-        # Parse the response and create a structured list of results
-        parsed_results = []
-        for res in response:
-            parsed_results.append({
-                "Content": res.page_content,
-                "Page": res.metadata.get("page"),
-                "Source": res.metadata.get("source"),
-                "Chunk" : res.metadata.get("chunk"),
-            })
-
-        return parsed_results
-
-def load_ai_template(template_name: str) -> Dict:
+def load_ai_template(config_path: str) -> Dict:
     """
     Load the template present in the config.yaml file
 
@@ -457,7 +576,7 @@ def load_ai_template(template_name: str) -> Dict:
         Dict: Template configuration loaded from the config.yaml file
 
     """
-    with open(template_name, 'r') as file:
+    with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     return config
 

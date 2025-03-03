@@ -8,13 +8,14 @@ from datetime import datetime, timedelta
 from collections import deque
 from threading import Thread
 from queue import Queue, Empty
-from typing import Callable,List, Dict
+from typing import Callable,List, Dict,Literal
 
 import torch 
 import pandas as pd
 from PIL import Image
 import streamlit as st
 from streamlit_javascript import st_javascript
+import streamlit.components.v1 as components
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 from langchain.chains import ConversationChain
 from langchain.storage import InMemoryStore
@@ -84,6 +85,8 @@ class ChatbotApp:
         self.__last_save_time = datetime.now()
         self.__SAVE_INTERVAL = timedelta(seconds=300)  # 5 minutes
         self.__MESSAGES_BEFORE_SAVE = 6
+
+        self.AGENT_TAGS = {}
         
     def _setup_logging(self):
         logging.basicConfig(
@@ -151,7 +154,7 @@ class ChatbotApp:
             st.session_state.active_page = "chat"  # Set active page to "chat"
             st.session_state.chat_type = chat_type # Type of chat in question 
 
-            st.session_state.layout = "wide" if chat_type == 2 else "centered"
+            st.session_state.layout = "wide" if chat_type in [1,2] else "centered"
             self.account_page.add_chat_id(new_session_id,chat_type=chat_type) # Add the session id to the user's account
             st.success(f"New session created: {new_session_name}")
             st.rerun()
@@ -180,7 +183,7 @@ class ChatbotApp:
             
             # Update active page and notify user
             st.session_state.active_page = "chat"
-            st.session_state.layout = "wide" if st.session_state.sessions[st.session_state.current_session_id]["chat_type"] == 2 else "centered"
+            st.session_state.layout = "wide" if st.session_state.sessions[st.session_state.current_session_id]["chat_type"] in [1,2] else "centered"
             # chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
                 
             st.success(f"Switched to session: {st.session_state.sessions[session_id]['name']}")
@@ -229,26 +232,18 @@ class ChatbotApp:
         st.logo("images/ai.png", size='large')
         st.sidebar.markdown("---")
         
-        options=("New Chat", "Machine learning", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
+        options=("New Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
         option = st.sidebar.selectbox(label="Chat Option selection", options=options,
                         index=None,placeholder="Choose a chat type",
                         label_visibility="visible",
                         key="sidebar_chat_choice")
-        if option == "New Chat": # index 0 
-            self.app.create_session(chat_type=options.index(option))  # Create a new chat session
-            st.session_state.active_page = "chat"
-            st.session_state.layout = "centered"
-            st.rerun()
-        elif option == "Machine learning": # index 1
-            self.app.create_session(chat_type=options.index(option))  # Create a machine learning session
-            st.session_state.active_page = "chat"
-            st.session_state.layout = "wide"
-            st.rerun()
-        elif option == "PDF chat": # index 2
-            self.app.create_session(chat_type=options.index(option))  # Create a PDF chat session
-            st.session_state.active_page = "chat"
-            st.session_state.layout = "wide"
-            st.rerun()
+        if st.sidebar.button("Create Session"):
+            if option == "New Chat": # index 0 
+                self.create_session(chat_type=options.index(option))  # Create a new chat session
+            elif option == "Agent": # index 1
+                self.create_session(chat_type=options.index(option))  # Create a Agent session
+            elif option == "PDF chat": # index 2
+                self.create_session(chat_type=options.index(option))  # Create a PDF chat session
 
         if "sessions" in st.session_state:
             st.sidebar.subheader("Recent")
@@ -434,14 +429,14 @@ class ChatbotApp:
 
     def display_chat(self):
 
-        chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
-        session = st.session_state.sessions[st.session_state.current_session_id]
         session_id = st.session_state.current_session_id
+        chat_type = st.session_state.sessions[session_id]["chat_type"]
+        session = st.session_state.sessions[session_id]
         """Displays the chat for the current session."""
-        if st.session_state.current_session_id and chat_type == 0:
+        if session_id and chat_type == 0:
             self.chatbot = self.get_or_create_llm(chat_type=chat_type)
 
-            session = st.session_state.sessions[st.session_state.current_session_id]
+            session = st.session_state.sessions[session_id]
             # self.display_messages(messages=session["messages"])
             for message in session["messages"]:
                 if "User" in message:
@@ -453,7 +448,7 @@ class ChatbotApp:
             # Input handling
             self.handle_input(chat_type=chat_type)
 
-        elif st.session_state.current_session_id and chat_type == 2:
+        elif session_id and chat_type == 2:
             col1, col2 = st.columns([5, 5], gap="large")  
             with col1:
                 uploaded_file = st.file_uploader("Choose a PDF file")# accept_multiple_files=True
@@ -475,6 +470,10 @@ class ChatbotApp:
                             session["embeddings_ready"] = False
                             session.pop("saved", None)  # Reset saved flag for new file
 
+                        # Invalidate the cached LLM instance if it exists
+                        if chat_type == 2 and session_id in st.session_state.llm_instances.get(chat_type, {}):
+                            st.session_state.llm_instances[2].pop(session_id)
+
                     if not session.get("saved"):
                         self.render_embeddings_popup(file=uploaded_file,file_hash=uploaded_file_hash)
                 
@@ -485,7 +484,7 @@ class ChatbotApp:
 
             with col2:  # Chat section
                 # session = st.session_state.sessions[st.session_state.current_session_id]
-                container_key = f"chat_container_{st.session_state.current_session_id}"
+                container_key = f"chat_container_{session_id}"
                 message_container = st.container(height=750 ,key=container_key)
                 with message_container: 
                     st.markdown("### Chat")
@@ -493,6 +492,19 @@ class ChatbotApp:
                     self.display_messages(session["messages"], container=message_container)
                 # Handle new user input  
                 self.handle_input(chat_type=chat_type, container=message_container)
+
+        elif session_id and  chat_type == 1:
+            agent_col1, agent_col2 = st.columns([5, 5], gap="large") 
+            with agent_col1:
+                container_key = f"chat_container_agent_{session_id}"
+                agent_message_container = st.container(height=800 ,key=container_key)
+                with agent_message_container: 
+                    st.markdown("### Chat")
+                    # Display existing messages
+                    self.display_messages(session["messages"], container=agent_message_container)
+                self.handle_input(chat_type=chat_type, container=agent_message_container)
+            with agent_col2:  # Reference and other information showing area updated each time 
+                pass
         else:
             st.write("No active session. Please create or switch to a session.")
 
@@ -601,25 +613,52 @@ class ChatbotApp:
             
             user_input = st.chat_input(placeholder="Ask me anything...",key="2")
             if user_input and st.session_state.current_session_id:
+                if st.session_state.current_session_id in st.session_state.llm_instances.get(chat_type, {}):
+                    session = st.session_state.sessions[st.session_state.current_session_id]
+                    if "last_saved_index" not in st.session_state.sessions[st.session_state.current_session_id]:
+                        st.session_state.sessions[st.session_state.current_session_id]["last_saved_index"] = -1
+                    session["messages"].append({"User": user_input})
+                
+                    # Display user message
+                    with container.chat_message("user"):
+                        st.markdown(user_input)
+                    try:
+                        with st.spinner("Thinking........"):
+                            # Get AI response
+                            response = self.chatbot.run(query=user_input , chat_id = st.session_state.current_session_id)
+                            session["messages"].append({"AI": response["response"]})
+                            self.render_multi_modal_response(response=response,container=container)
+                            self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
+                    except Exception as e:
+                        self.logger.error("An error occured: {e}")
+                        st.error(f"An error occurred: {e}")
+                else:
+                    message = "LLM instance is not created, to do so upload a PDF file"
+                    self.popover_messages(message=message,msg_type="WARNING")
+        else:
+            st.markdown("Type `/link`, `/pdf` in the box below to see them highlighted.")
+            user_input = st.chat_input(placeholder="Ask me anything...",key="1")
+
+            if user_input and st.session_state.current_session_id:
                 session = st.session_state.sessions[st.session_state.current_session_id]
                 if "last_saved_index" not in st.session_state.sessions[st.session_state.current_session_id]:
                     st.session_state.sessions[st.session_state.current_session_id]["last_saved_index"] = -1
+
+                flag, query = parse_flags_and_queries(input_text=user_input)
+                # Verification phase for the flags and their sub flags if given 
                 session["messages"].append({"User": user_input})
-            
-                # Display user message
-                with container.chat_message("user"):
-                    st.markdown(user_input)
-                try:
-                    with st.spinner("Thinking........"):
-                        # Get AI response
-                        response = self.chatbot.run(query=user_input , chat_id = st.session_state.current_session_id)
-                        session["messages"].append({"AI": response["response"]})
-                        self.render_multi_modal_response(response=response,container=container)
-                        # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
-                except Exception as e:
-                    print(e)
-                    self.logger.error("An error occured: {e}")
-                    st.error(f"An error occurred: {e}")
+
+    @st.dialog(title="Session message")
+    def popover_messages(self,message:str,msg_type:Literal["ERROR", "WARNING","INFO"] = str) : 
+        if msg_type == "ERROR":
+            st.error(message)
+        elif msg_type == "WARNING":
+            st.warning(message)
+        elif msg_type == "INFO":
+            st.info(message)
+        else:
+            st.info(message)
+
 
     def _save_images(self, img:List,filename:str):
         """Saves images from the current document"""
@@ -671,17 +710,12 @@ class ChatbotApp:
         # Ensure that the number of new file paths matches the number of img_ids to add
         if len(new_file_paths) != len(img_ids_to_add):
             raise ValueError("The number of file paths does not match the number of img_ids.")
-        
-        # Pair each img_id with its corresponding file_path
         new_images = dict(zip(img_ids_to_add, new_file_paths))
-
-        # Add the new images to the database
         if new_images:
             self.img_datadb.add_image(new_images) 
 
             # Update the session state with the new image db
             st.session_state.image_data = self.img_datadb.get_chat_image()
-
 
     def _save_table_to_db(self):
         # Add the tables to the db 
@@ -958,8 +992,8 @@ class ChatbotApp:
                         self.logger.info("Pdf chat bot is created")
                         self.chat_page.render_pdf_chat_page()
                     elif st.session_state.sessions[st.session_state.current_session_id]["chat_type"] == 1:
-                        self.logger.info("Machine learning chat bot is created")
-                        self.chat_page.render_machine_learning_page()
+                        self.logger.info("Agent is created")
+                        self.chat_page.render_AGENT_page()
                 else:
                     st.error("No active chat session found. Please create a new chat from the sidebar.")
             elif active_page == "history":

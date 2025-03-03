@@ -7,19 +7,36 @@ class HomePage:
     def __init__(self, app):
         """
         Initialize with a reference to the main app.
-        :param app: The main ChatbotApp instance.
+
+        params
+        ------ 
+        - app: The main ChatbotApp instance.
         """
         self.app = app
         
 
     def render_welcome_section(self,username:str):
-        """Welcome Section."""
+        """
+        Render the welcome portion of the home page 
+        
+        params
+        ------
+        - username (str): 
+            Username of the user who is logged in.
+        
+        """
         greeting = self.get_greeting()
         st.markdown(f"<h1>🤖 Welcome to H1, {username} </h1>", unsafe_allow_html=True)
         st.markdown(f"<p>{greeting}! I'm H1, your AI assistant. How can I help you today?</p>", unsafe_allow_html=True)
 
-    def get_greeting(self):
-        """Get time-based greeting."""
+    def get_greeting(self) -> str:
+        """
+        Get time-based greeting.
+        
+        returns
+        -------
+            str: Greeting based on current time of day.
+        """
         hour = datetime.now().hour
         if 5 <= hour < 12:
             return "Good Morning"
@@ -29,7 +46,9 @@ class HomePage:
             return "Good Evening"
         
     def render_features(self):
-        """Render feature highlights in a horizontal layout using columns."""
+        """
+        Render feature highlights in a horizontal layout using columns.
+        """
         st.subheader("What I Can Do")
 
         # Add custom CSS for styling the feature cards
@@ -111,24 +130,19 @@ class HomePage:
         cols = st.columns(3)
 
         with cols[0]:
-            options=("New Chat", "Machine learning", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
+            options=("New Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
             option = st.selectbox(label="Chat Option selection", options=options,
                             index=None,placeholder="Choose a chat type",
                             label_visibility="collapsed")
             if option == "New Chat": # index 0 
                 self.app.create_session(chat_type=options.index(option))  # Create a new chat session
-                st.session_state.active_page = "chat"
-                st.session_state.layout = "centered"
-                st.rerun()
-            elif option == "Machine learning": # index 1
-                self.app.create_session(chat_type=options.index(option))  # Create a machine learning session
-                st.session_state.layout = "wide"
-                st.rerun()
+                # st.rerun()
+            elif option == "Agent": # index 1
+                self.app.create_session(chat_type=options.index(option))  # Create a Agent session
+                # st.rerun()
             elif option == "PDF chat": # index 2
                 self.app.create_session(chat_type=options.index(option))  # Create a PDF chat session
-                st.session_state.active_page = "chat"
-                st.session_state.layout = "wide"
-                st.rerun()
+                # st.rerun()
 
         with cols[1]:
             if st.button("📚 History"):
@@ -143,6 +157,9 @@ class HomePage:
         self.render_history_page()
 
     def render_history_page(self):
+        """
+        Render the history page present in the home page. 
+        """
         st.subheader("History")
         history_expander = st.expander("Recent history", expanded=True)
 
@@ -166,7 +183,7 @@ class HomePage:
         st.write("Here you can configure the chatbot settings.")
         
         # Placeholder settings options
-        model_choice = st.selectbox("Choose Model", ["Simple Chat", "Chat with pdf", "Machine learning"])
+        model_choice = st.selectbox("Choose Model", ["Simple Chat", "Chat with pdf", "Agent"])
         context_length = st.slider("Context Length", min_value=10, max_value=100, value=50)
 
         if st.button("Submit"):

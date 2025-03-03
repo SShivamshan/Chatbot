@@ -3,9 +3,9 @@ sys.path.append(".")
 from app import ChatbotApp
 
 # TODO: 
-#       Find a way so that we delete an instance of saved mode in case the user adds a new pdf 
-#       Correct the agent and add it as the third componen
-#       The torch cuda is not working find a solution for that 
+#       Add an input keyword creator so that we can identify the type of keywords to add
+#       Redo webscrapper tool with keywords and non keywords -> summarize phase  
+#       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 
 #       Finish settings and config.toml
 #       Finish documentation 
 #       Create a script for the ollama server

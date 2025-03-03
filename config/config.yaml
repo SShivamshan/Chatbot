@@ -151,6 +151,10 @@ Prompt_templates:
     Query_templates:
       name: "Query Templates"
       template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
         Generate multiple search query variations that capture different semantic angles of the original question. 
         
         Rules:
@@ -162,7 +166,147 @@ Prompt_templates:
         Original Question: {question}
         
         Query Variations:
+
+        <|eot_id|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+        
       input_variables:
         - name: question
           description: The user's original question
           is_required: true
+
+Agent_templates:
+
+    Query_identification_template:
+      name: "Query Identification Template"
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an AI assistant specialized in analyzing user queries and classifying them into appropriate action categories given down below.
+
+        Your task is to:
+        1. Analyze the user's query
+        2. Identify the most appropriate action category
+        3. Provide confidence level and reasoning
+        4. Provide the correct type of tool for each action category
+        5. You must always return valid JSON only with the following schema and nothing else:
+        {{
+          "category": string[], // Must be from ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple","element_search"]
+          "confidence": number, // Must be between 0.0 and 1.0
+          "reasoning": string,
+          "required_tools": string[] // Must be from ["web_search", "web_scrape", "knowledge" , "date_time","code"]
+        }}
+
+        Available categories:
+        - web_search: Queries requiring real-time or external information (e.g., "Latest news on AI research")
+        - web_scrape: Queries needing specific data extraction from websites (e.g., "Scrape weather data from weather.com")
+        - element_search: Queries requiring specific data extraction from specific elements within a given website (e.g., "What is the section Blackholes about on this website?")
+        - knowledge_base: Queries answerable using internal knowledge or present within the vectordb (e.g., "Who discovered gravity?")
+        - date_time: Queries requiring date and time information (e.g., "What time is it in Arizona right now?", "Convert 5 PM EST to UTC")
+        - code: Queries requiring executing specific code snippets (e.g., "Write a Python function for Fibonacci sequence")
+        - multiple: Queries requiring combination of the above approaches
+
+        **Important:**  
+        If the user asks about the current time, time zone conversions, or date-related queries, the **date_time** category should be selected **instead of** web_search or knowledge_base.
+
+        Available tools : 
+        - web_search: Searches for information using various search engines
+        - web_scrape: Scrapes websites for data.
+        - element_search: web_scrape 
+        - knowledge: Answers questions using internal knowledge
+        - date_time: Converts dates and times into a standardized format
+        - code: Gives programming code answers based on the demanded programming languages. 
+
+        Query to analyze: {query}
+
+        <|eot_id|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: query
+          description: The user's query
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple","element_search"]
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "reasoning": {
+              "type": "string"
+            },
+            "required_tools": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["web_search", "web_scrape", "date_time", "knowledge","code"]
+              }
+            }
+          },
+          "required": ["category", "confidence", "reasoning", "required_tools"]
+        }
+
+    Query_web_template:
+      name: "Query Web"
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping. 
+        Your keywords should:
+        - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").
+        - **Include synonyms or related terms** for better accuracy.
+        - **Prioritize relevant file formats** (PDF, HTML, JPEG, PNG) based on the user intent.
+        - Append file types (e.g., `:pdf`, `:html`) directly to the keyword to ensure more targeted retrieval.
+        
+        Return only a JSON object with the following schema:
+        {{
+          "keywords": string[]
+        }}
+
+        Example Output format:
+        - For a query like "Lidar camera detection," return ["Lidar camera detection:pdf", "Lidar camera detection:html"]
+        - For a query like "Recent research on LiDAR sensors," return ["LiDAR sensors research:pdf", "LiDAR sensors research:html"]
+
+        Query to analyze: {query}
+
+        <|eot_id|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: query
+          description: The user's query
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+              "type": "object",
+              "properties": {
+                "keywords": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["keywords"]
+            }
