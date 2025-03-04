@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup, ProcessingInstruction
 
 # LangChain imports
 from langchain.docstore.document import Document
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
@@ -226,12 +226,14 @@ class CustomSearchTool(BaseTool):
 class WebscrapperTool(BaseTool):
     name :str = "web_scrape"
     description:str = "Useful for information scrapping for websites"
+    llm: Optional[Any] = Field(default=None, exclude=True)
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self):
+    def __init__(self,llm:Chatbot):
         super().__init__()
-    
+        self.llm = llm
+
     # Solution : https://github.com/Unstructured-IO/unstructured/issues/3642 
     def parse_html(self,url:str=None) -> List[Text]:
         """
@@ -267,6 +269,23 @@ class WebscrapperTool(BaseTool):
             raise RuntimeError(f"Error communicating with web: {e}")
     
 
+    def summarize_text(self, text: str) -> str:
+        """
+        Summarizes large text using LLM.
+
+        Params:
+            - text (str): Text to summarize.
+
+        Returns:
+            - str: Summarized content.
+        """
+        prompt = PromptTemplate(
+            template="Summarize the following web content in a concise manner:\n{text}",
+            input_variables=["text"]
+        )
+
+        return self.llm.invoke(prompt.format(text=text))
+
     def identify_relevant_passages(self, elements: List[Text], keywords: List[str]) -> List[Dict]:
         """
         Identify relevant sections from parsed HTML elements using keyword matching.
@@ -293,65 +312,122 @@ class WebscrapperTool(BaseTool):
             if element_type == "Title":
                 section_titles[element["element_id"]] = element["text"]
             
-            # Only process relevant element types (Title, NarrativeText, ListItem)
-            if element_type in {"Title", "NarrativeText", "ListItem"}:
-                text_lower = element["text"].lower()
-                
-                # Check if any keyword is present in the text
-                if any(keyword in text_lower for keyword in keywords):
+            if keywords is None:
+                if element_type in {"Title", "NarrativeText"}:
+                    text_key = (element["element_id"], element["text"])
                     parent_id = get_parent_id(element)
-                    
-                    # If it's a NarrativeText, find its corresponding Title's ID
+                
                     if element_type == "NarrativeText":
                         section_id = element["metadata"].get("parent_id", parent_id)
                     else:
                         section_id = parent_id
-                    
-                    # Determine the section title
-                    section_title = section_titles.get(section_id, "Unknown Title")
-                    
-                    # Initialize section if not already stored
                     if section_id not in relevant_sections:
                         relevant_sections[section_id] = {
                             "section_id": section_id,
                             "elements": [],
-                            "title": section_title,
-                        }
-
-                    # Only count positions in sections with ListItems
-                    if element_type == "ListItem":
-                        if section_id not in position_counters:
-                            position_counters[section_id] = 0
-                        position_counters[section_id] += 1
-                        position = position_counters[section_id]  
-                    else:
-                        position = None  
-
-                    text_key = (section_id, element["text"])  
+                    }
                     if text_key not in processed_texts:
                         processed_texts.add(text_key)
-                        
-                        # Only store the position if it's a ListItem or if the section contains ListItems
-                        position_info = {}
-                        if element_type == "ListItem":
-                            position_info["position"] = position  # Store relative position if applicable
-                        
+
                         relevant_sections[section_id]["elements"].append({
-                            "type": element_type,
                             "text": element["text"],
-                            "metadata": element["metadata"],
-                            **position_info,  # Merge position information if applicable
                         })
+            else:
+                # Only process relevant element types (Title, NarrativeText, ListItem)
+                if element_type in {"Title", "NarrativeText", "ListItem"}:
+                    text_lower = element["text"].lower()
+                    
+                    # Check if any keyword is present in the text
+                    if any(keyword in text_lower for keyword in keywords):
+                        parent_id = get_parent_id(element)
+                        
+                        # If it's a NarrativeText, find its corresponding Title's ID
+                        if element_type == "NarrativeText":
+                            section_id = element["metadata"].get("parent_id", parent_id)
+                        else:
+                            section_id = parent_id
+                        
+                        # Determine the section title
+                        section_title = section_titles.get(section_id, "Unknown Title")
+                        
+                        # Initialize section if not already stored
+                        if section_id not in relevant_sections:
+                            relevant_sections[section_id] = {
+                                "section_id": section_id,
+                                "elements": [],
+                                "title": section_title,
+                            }
+
+                        # Only count positions in sections with ListItems
+                        if element_type == "ListItem":
+                            if section_id not in position_counters:
+                                position_counters[section_id] = 0
+                            position_counters[section_id] += 1
+                            position = position_counters[section_id]  
+                        else:
+                            position = None  
+
+                        text_key = (section_id, element["text"])  
+                        if text_key not in processed_texts:
+                            processed_texts.add(text_key)
+                            
+                            # Only store the position if it's a ListItem or if the section contains ListItems
+                            position_info = {}
+                            if element_type == "ListItem":
+                                position_info["position"] = position  # Store relative position if applicable
+                            
+                            relevant_sections[section_id]["elements"].append({
+                                "type": element_type,
+                                "text": element["text"],
+                                "metadata": element["metadata"],
+                                **position_info,  # Merge position information if applicable
+                            })
 
         return list(relevant_sections.values())  # Return as a list of dictionaries
+    def chunk_large_text(self, text: str, max_tokens: int = 1024) -> List[str]:
+        """
+        Splits large text into LLM-compatible chunks.
 
-    def _run(self,query: Union[str, list],url:str=None) -> List[Dict]:
+        Params:
+            - text (str): Large text.
+            - max_tokens (int): Max token size.
+
+        Returns:
+            - List of text chunks.
+        """
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_tokens,
+            chunk_overlap=50
+        )
+        return splitter.split_text(text)
+    
+    def parse_text(self, text:List[Dict]):
+        pass
+
+    def _run(self,keywords: Union[str, list],url:str=None) -> List[Dict]:
         
         elements = self.parse_html(url=url)
-        if query:
-            return self.identify_relevant_passages(elements=elements,keywords=query)
-        else:
-            return self.identify_relevant_passages(elements=elements,keywords=None)
+        keywords = keywords if isinstance(keywords, list) else ([keywords] if keywords else None)
+        
+        extracted_data = self.identify_relevant_passages(elements, keywords)
+        return extracted_data
+        # if not extracted_data:
+        #     return [{"message": "No relevant information found."}]
+
+        # if keywords is not None:
+        #     return extracted_data
+        
+        # full_text = " ".join([entry for entry['elements'] in extracted_data])
+
+        # if len(full_text.split()) <= 300:
+        #     return [{"summary": full_text}]
+
+        # text_chunks = self.chunk_large_text(full_text, max_tokens=1024)
+        # summarized_chunks = [self.summarize_text(chunk) for chunk in text_chunks]
+
+        # final_summary = self.summarize_text(" ".join(summarized_chunks))
+
+        # return [{"summary": final_summary}]
     
     def _arun(self):
         raise NotImplementedError("This tool does not support async")

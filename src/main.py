@@ -3,8 +3,7 @@ sys.path.append(".")
 from app import ChatbotApp
 
 # TODO: 
-#       Add an input keyword creator so that we can identify the type of keywords to add
-#       Redo webscrapper tool with keywords and non keywords -> summarize phase  
+#       reimprove the webscrapper to retrieve only the core elements webscrapper tool test it alone and then with agent
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 
 #       Finish settings and config.toml
 #       Finish documentation 

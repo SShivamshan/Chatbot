@@ -185,42 +185,46 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an AI assistant specialized in analyzing user queries and classifying them into appropriate action categories given down below.
+        You are an AI assistant specialized in analyzing user queries and classifying them into appropriate action categories given below.
 
         Your task is to:
-        1. Analyze the user's query
-        2. Identify the most appropriate action category
-        3. Provide confidence level and reasoning
-        4. Provide the correct type of tool for each action category
+        1. Analyze the user's query.
+        2. Identify the most appropriate action category.
+        3. Provide confidence level and reasoning.
+        4. Provide the correct type of tool for each action category.
         5. You must always return valid JSON only with the following schema and nothing else:
         {{
-          "category": string[], // Must be from ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple","element_search"]
+          "category": string[], // Must be from ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple", "element_search"]
           "confidence": number, // Must be between 0.0 and 1.0
           "reasoning": string,
-          "required_tools": string[] // Must be from ["web_search", "web_scrape", "knowledge" , "date_time","code"]
+          "required_tools": string[] // Must be from ["web_search", "web_scrape", "knowledge", "date_time", "code"]
         }}
 
-        Available categories:
-        - web_search: Queries requiring real-time or external information (e.g., "Latest news on AI research")
-        - web_scrape: Queries needing specific data extraction from websites (e.g., "Scrape weather data from weather.com")
-        - element_search: Queries requiring specific data extraction from specific elements within a given website (e.g., "What is the section Blackholes about on this website?")
-        - knowledge_base: Queries answerable using internal knowledge or present within the vectordb (e.g., "Who discovered gravity?")
-        - date_time: Queries requiring date and time information (e.g., "What time is it in Arizona right now?", "Convert 5 PM EST to UTC")
-        - code: Queries requiring executing specific code snippets (e.g., "Write a Python function for Fibonacci sequence")
-        - multiple: Queries requiring combination of the above approaches
+        **Category and Required Tools Mapping Rules:**
+        - If category includes **"web_search"**, `required_tools` **must include** `["web_search"]`.
+        - If category includes **"web_scrape"** or **"element_search"**, `required_tools` **must only include** `["web_scrape"]`.
+        - If category includes **"date_time"**, `required_tools` **must include** `["date_time"]`.
+        - If category includes **"knowledge_base"**, `required_tools` **must include** `["knowledge"]`.
+        - If category includes **"code"**, `required_tools` **must include** `["code"]`.
+        - If category includes **"multiple"**, `required_tools` **must be a combination of the tools based on the detected categories**.
 
-        **Important:**  
-        If the user asks about the current time, time zone conversions, or date-related queries, the **date_time** category should be selected **instead of** web_search or knowledge_base.
+        **Available Categories:**
+        - **web_search**: Queries requiring real-time or external information (e.g., "Latest news on AI research").
+        - **web_scrape**: Queries needing specific data extraction from the given website link (e.g., "Scrape weather data from weather.com").
+        - **element_search**: Queries requiring specific data extraction from specific elements within a given website (e.g., "What is the section Blackholes about on this website?").
+        - **knowledge_base**: Queries answerable using internal knowledge or present within the vectordb (e.g., "Who discovered gravity?").
+        - **date_time**: Queries requiring date and time information (e.g., "What time is it in Arizona right now?", "Convert 5 PM EST to UTC").
+        - **code**: Queries requiring executing specific code snippets (e.g., "Write a Python function for Fibonacci sequence").
+        - **multiple**: Queries requiring a combination of the above approaches.
 
-        Available tools : 
-        - web_search: Searches for information using various search engines
-        - web_scrape: Scrapes websites for data.
-        - element_search: web_scrape 
-        - knowledge: Answers questions using internal knowledge
-        - date_time: Converts dates and times into a standardized format
-        - code: Gives programming code answers based on the demanded programming languages. 
+        **Available Tools:**  
+        - **web_search**: Searches for information using various search engines for a given query.  
+        - **web_scrape**: Scrapes the given website for data or information.  
+        - **knowledge**: Answers questions using internal knowledge.  
+        - **date_time**: Converts dates and times into a standardized format.  
+        - **code**: Provides programming-related responses.
 
-        Query to analyze: {query}
+        **Query to analyze:** {query}
 
         <|eot_id|>
 
@@ -240,7 +244,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple","element_search"]
+                "enum": ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple", "element_search"]
               }
             },
             "confidence": {
@@ -255,13 +259,71 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "date_time", "knowledge","code"]
+                "enum": ["web_search", "web_scrape", "date_time", "knowledge", "code"]
               }
             }
           },
           "required": ["category", "confidence", "reasoning", "required_tools"]
         }
 
+    Query_web_scrape_classification:
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert in query classification for web scraping tasks.  
+        Given a user query, your job is to:  
+        
+        - Determine whether the user is requesting **specific information** or a **general summary** from a webpage.  
+        - Extract the **URL** if present in the query.  
+        - If the user requests **specific information**, extract the key topic or data point they need.  
+        
+        **Query:** {query}  
+
+        The type of categories:  
+        - **general_summary**: If the query asks for general information present within the given URL.  
+        - **specific_information**: If the query asks for a specific piece of information present within the given URL.  
+
+        **Output JSON Format:**  
+        ```json
+        {{
+            "category": "general_summary" | "specific_information",
+            "url": "string",
+            "elements_to_retrieve": ["string"]
+        }}
+        ```
+
+        <|eot_id|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: query
+          description: "The query to classify."
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "category":{
+              "type": "string",
+              "enum": ["general_summary", "specific_information"]
+            },
+            "url": {
+              "type": "string"
+            },
+            "elements_to_retrieve": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+          
     Query_web_template:
       name: "Query Web"
       template: |
@@ -269,23 +331,28 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping. 
-        Your keywords should:
-        - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").
-        - **Include synonyms or related terms** for better accuracy.
-        - **Prioritize relevant file formats** (PDF, HTML, JPEG, PNG) based on the user intent.
-        - Append file types (e.g., `:pdf`, `:html`) directly to the keyword to ensure more targeted retrieval.
+        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping.  
         
-        Return only a JSON object with the following schema:
+        - If `query_type` is **"web_search"**, prioritize **broad but relevant keywords** with synonyms and related terms to ensure optimal search engine retrieval.  
+        - If `query_type` is **"web_scrape"**, prioritize **precise keywords** that help locate structured(sections, information, figures) data from specific sources, like research papers, company websites, or databases.  
+
+        Additional instructions:  
+        - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").  
+        - **Include synonyms or related terms** for better accuracy.  
+        - **Prioritize relevant file formats** (PDF, HTML) based on `query_type`.  
+        - Append file types (e.g., `:pdf`, `:html`) to the keyword for **web search** but not for **web scraping**.  
+
+        Return only a JSON object with the following schema:  
         {{
           "keywords": string[]
         }}
 
         Example Output format:
-        - For a query like "Lidar camera detection," return ["Lidar camera detection:pdf", "Lidar camera detection:html"]
-        - For a query like "Recent research on LiDAR sensors," return ["LiDAR sensors research:pdf", "LiDAR sensors research:html"]
+        - For a **web search** query like `"Lidar camera detection"`, return `["Lidar camera detection:pdf", "Lidar camera detection:html"]`  
+        - For a **web scraping** query like `"Recent research on LiDAR sensors"`, return `["LiDAR sensor detection", "LiDAR sensor technology"]`  
 
-        Query to analyze: {query}
+        Query to analyze: {query}  
+        Query Type: {query_type}  
 
         <|eot_id|>
 
@@ -295,18 +362,21 @@ Agent_templates:
         - name: query
           description: The user's query
           is_required: true
+        - name: query_type
+          description: The type of query (either "web_search" or "web_scrape")
+          is_required: true
 
       output_parser:
         type: "json"
         schema: {
-              "type": "object",
-              "properties": {
-                "keywords": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "required": ["keywords"]
+          "type": "object",
+          "properties": {
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
+          },
+          "required": ["keywords"]
+        }
