@@ -113,12 +113,48 @@ class Agent(BaseModel):
         # Instantiate the CustomSearchTool
         custom_search_tool = CustomSearchTool()
         # Instantiate the WebscrapperTool
-        webscrapper_tool = WebscrapperTool()
+        webscrapper_tool = WebscrapperTool(llm=self.llm)
         tools = {
             "web_search": custom_search_tool,
             "web_scrapper": webscrapper_tool
         }
         return tools
+    
+
+    def format_scraper_content(content):
+        """
+        Formats content from the web scraper into a consistent text format.
+        Handles different possible structures of the scraped content.
+        """
+        formatted_text = ""
+        
+        # Case 1: Content is a list of sections with title and elements
+        if isinstance(content, list) and all(isinstance(item, dict) for item in content):
+            # Check if it has the section structure
+            if any("title" in item and "elements" in item for item in content):
+                for section in content:
+                    if "title" in section and "elements" in section:
+                        title = section.get("title", "")
+                        formatted_text += f"\n\n## {title}\n"
+                        
+                        # Extract and join all text from elements
+                        if isinstance(section["elements"], list):
+                            section_text = " ".join([
+                                elem.get("text", "") 
+                                for elem in section["elements"] 
+                                if isinstance(elem, dict) and "text" in elem
+                            ])
+                            formatted_text += section_text
+            
+            # Case 2: Content is a list of dictionaries with title and summary
+            elif any("title" in item and "summary" in item for item in content):
+                for item in content:
+                    if "title" in item and "summary" in item:
+                        title = item.get("title", "")
+                        summary = item.get("summary", "")
+                        formatted_text += f"\n\n## {title}\n{summary}"
+
+        return formatted_text.strip()
         
     def create_graph(self):
         """Create a LangGraph workflow for agent operations."""
@@ -127,6 +163,7 @@ class Agent(BaseModel):
         # 1. Identify query type
         def identify_query(state: GraphState) -> GraphState:
             result = self.question_routing.invoke({"query": state["query"]})
+            print(f"result:{result}")
             return {
                 **state,
                 "category": result.get("category", []),
@@ -135,32 +172,39 @@ class Agent(BaseModel):
                 "required_tools": result.get("required_tools", [])
             }
 
-        # 2. Extract keywords (ONLY for web search, NOT for web scraping)
+        # 2. Extract keywords (for web search OR for specific information scraping)
         def extract_keywords(state: GraphState) -> GraphState:
-            if "web_scraper" in state.get("required_tools", []):
-                return state  # Skip keyword extraction for scraping
-
+            query_type = "web_search"
+            
+            # Check if this is for specific information scraping
+            if (state.get("elements_to_retrieve") == "specific_information" and 
+                "web_scrape" in state.get("required_tools", [])):
+                query_type = "web_scrape"
+                
             result = self.question_to_keywords.invoke({
                 "query": state["query"],
-                "query_type": "web_search"
+                "query_type": query_type
             })
+            
             return {**state, "keywords": result.get("keywords", [])}
 
+        # 3. Classify scrape query 
         def classify_scrape_query(state: GraphState) -> GraphState:
             """
             Uses the LLM to classify a web scraping query.
             Determines whether to extract a general summary or specific elements.
             """
             result = self.query_web_scrape.invoke({"query": state["query"]})
-
-            return {
+            updated_state = {
                 **state,
                 "category": result.get("category", ""),
-                "scrape_url": result.get("url", ""),
+                "scrape_url": result.get("url", ""),  
                 "elements_to_retrieve": result.get("elements_to_retrieve", [])
             }
+            print(f"Updated state after classification: {updated_state}") 
+            return updated_state
 
-        # 3. Web search handler (Uses extracted keywords)
+        # 4. Web search handler
         def run_web_search(state: GraphState) -> GraphState:
             keywords = state.get("keywords", [])
             if not keywords:
@@ -170,32 +214,54 @@ class Agent(BaseModel):
             search_results = self.tools["web_search"].run(search_query)
             return {**state, "search_results": search_results}
 
-        # 4. Web scraper handler (Runs immediately after query identification)
+        # 5. Web scraper handler
         def run_web_scraper(state: GraphState) -> GraphState:
             """
             Runs web scraping using the classified query data.
             """
+            print("Running web scrape : ", state)
             url = state.get("scrape_url", "")
-            keywords = state.get("elements_to_retrieve", [])
+            # Determine what to extract
+            extraction_type = state.get("category", "")
+            print(f"Running web scraper for URL: {url} with extraction type: {extraction_type}")
+            
+            if extraction_type == "specific_information":
+                keywords = state.get("keywords", [])
+            else:
+                keywords = state.get("elements_to_retrieve", [])
 
             if not url:
                 return {**state, "scrape_results": [{"error": "No valid URL provided for web scraping"}]}
 
-            content = self.tools["web_scrapper"].run({
+            raw_content = self.tools["web_scrapper"].run({
                 "url": url,
                 "keywords": keywords  # Extract specific semantic information
             })
+            print(raw_content)
+            formatted_content = self.format_scraper_content(raw_content)
+    
+            return {**state, "scrape_results": [{"query": state["query"], "content": formatted_content}]}
 
-            return {**state, "scrape_results": [{"query": state["query"], "content": content}]}
 
-        # 5. Generate final answer
+        # 6. Generate final answer
         def generate_answer(state: GraphState) -> GraphState:
+            # Extract scrape results content
+            scrape_content = ""
+            if state.get("scrape_results"):
+                for result in state.get("scrape_results", []):
+                    if "content" in result:
+                        scrape_content = result["content"]
+                        break
+            
+            # Format search results if present
+            search_content = json.dumps(state.get("search_results", []), indent=2)
+            
             prompt = f"""
             Query: {state["query"]}
 
-            Search Results: {json.dumps(state.get("search_results", []), indent=2)}
+            {"Search Results: " + search_content if state.get("search_results") else ""}
 
-            Scraped Content: {json.dumps(state.get("scrape_results", []), indent=2)}
+            {"Scraped Content: " + scrape_content if scrape_content else ""}
 
             Based on the information above, provide a comprehensive answer to the query.
             Do not include any citations or source links in your answer - I will add those separately.
@@ -209,7 +275,7 @@ class Agent(BaseModel):
         workflow.add_node("extract_keywords", extract_keywords)
         workflow.add_node("web_search", run_web_search)
         workflow.add_node("classify_scrape_query", classify_scrape_query)
-        workflow.add_node("web_scraper", run_web_scraper)
+        workflow.add_node("web_scrape", run_web_scraper)
         workflow.add_node("generate_answer", generate_answer)
 
         # Define edges
@@ -221,18 +287,27 @@ class Agent(BaseModel):
 
             if "web_search" in required_tools:
                 next_nodes.append("extract_keywords")  # Web search needs keyword extraction
-            if "web_scraper" in required_tools:
+            if "web_scrape" in required_tools:
                 next_nodes.append("classify_scrape_query")  # First classify the web scraping query
 
             return next_nodes or ["generate_answer"]
 
         def route_after_keywords(state: GraphState) -> List[str]:
-            return ["web_search"] if "web_search" in state.get("required_tools", []) else ["generate_answer"]
+            if "web_search" in state.get("required_tools", []):
+                return ["web_search"]
+            else:
+                return ["generate_answer"]
 
         def route_after_search(state: GraphState) -> List[str]:
             return ["generate_answer"]
+            
         def route_after_scrape_classification(state: GraphState) -> List[str]:
-            return ["web_scraper"]
+            print(f"🔍 Routing after classification: {state}")
+            if state.get("category") == "specific_information":
+                return ["extract_keywords"]
+            else:
+                return ["web_scrape"]
+                
         def route_after_web_scraper(state: GraphState) -> List[str]:
             return ["generate_answer"]
         
@@ -241,16 +316,13 @@ class Agent(BaseModel):
         workflow.add_conditional_edges("extract_keywords", route_after_keywords)
         workflow.add_conditional_edges("web_search", route_after_search)
         workflow.add_conditional_edges("classify_scrape_query", route_after_scrape_classification)
-        workflow.add_conditional_edges("web_scraper", route_after_web_scraper)
-        workflow.add_edge("web_scraper", "generate_answer")
-        workflow.add_edge("web_search", "generate_answer")
+        workflow.add_conditional_edges("web_scrape", route_after_web_scraper)
 
         # Set the output
         workflow.set_finish_point("generate_answer")
 
         return workflow
 
-    
     def initialize_agent(self):
         """Initialize the agent with LangGraph."""
         # Create the graph

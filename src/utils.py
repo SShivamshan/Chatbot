@@ -24,13 +24,14 @@ from bs4 import BeautifulSoup, ProcessingInstruction
 
 # LangChain imports
 from langchain.docstore.document import Document
+from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain.tools import BaseTool, StructuredTool, tool
 from langchain_chroma import Chroma
-from langchain.schema import BaseRetriever
+from langchain.schema import BaseRetriever,HumanMessage
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 
@@ -255,12 +256,28 @@ class WebscrapperTool(BaseTool):
             # Use BeautifulSoup to parse the HTML
             soup = BeautifulSoup(response.text, "lxml")
 
-            # Remove processing instructions
-            for pi in soup.find_all(string=lambda text: isinstance(text, ProcessingInstruction)):
-                pi.extract()
+            main_content = None
 
-            # Convert cleaned soup back to a string
-            cleaned_html = str(soup)
+            # Look for common main content containers
+            if soup.find("main"):
+                main_content = soup.find("main")
+            elif soup.find("article"):
+                main_content = soup.find("article")
+            elif soup.find("div", {"id": "content"}):
+                main_content = soup.find("div", {"id": "content"})
+            elif soup.find("div", {"id": "main-content"}):
+                main_content = soup.find("div", {"id": "main-content"})
+            else:
+                # Fallback: take the largest <div> with the most text
+                main_content = max(soup.find_all("div"), key=lambda div: len(div.text), default=soup)
+
+            # Remove unwanted elements (e.g., navigation, footer, ads)
+            for tag in main_content.find_all(["header", "footer", "nav", "aside", "script", "style"]):
+                tag.extract()
+
+            # Convert cleaned content to a string
+            cleaned_html = str(main_content)
+
             elements = partition_html(text=cleaned_html)
 
             return elements
@@ -269,36 +286,16 @@ class WebscrapperTool(BaseTool):
             raise RuntimeError(f"Error communicating with web: {e}")
     
 
-    def summarize_text(self, text: str) -> str:
-        """
-        Summarizes large text using LLM.
-
-        Params:
-            - text (str): Text to summarize.
-
-        Returns:
-            - str: Summarized content.
-        """
+    def summarize_text(self, title, text) -> str:
+    
         prompt = PromptTemplate(
-            template="Summarize the following web content in a concise manner:\n{text}",
-            input_variables=["text"]
+            template=f"Given the section title: '{title}', summarize the following text:\n{text}",
+            input_variables=["text","title"]
         )
 
-        return self.llm.invoke(prompt.format(text=text))
+        return self.llm.invoke(prompt.format(text=text, title=title))
 
     def identify_relevant_passages(self, elements: List[Text], keywords: List[str]) -> List[Dict]:
-        """
-        Identify relevant sections from parsed HTML elements using keyword matching.
-
-        params
-        ------
-            - elements (List[Text]): List of parsed elements (title, text, etc.).
-            - keywords (List[str]): List of keywords to search for.
-
-        returns
-        -------
-            - List[Dict]: A list of unique relevant sections, each represented as a dictionary.
-        """
         relevant_sections = {}
         processed_texts = set()
         section_titles = {}
@@ -315,23 +312,25 @@ class WebscrapperTool(BaseTool):
             if keywords is None:
                 if element_type in {"Title", "NarrativeText"}:
                     text_key = (element["element_id"], element["text"])
-                    parent_id = get_parent_id(element)
                 
                     if element_type == "NarrativeText":
-                        section_id = element["metadata"].get("parent_id", parent_id)
-                    else:
-                        section_id = parent_id
-                    if section_id not in relevant_sections:
-                        relevant_sections[section_id] = {
-                            "section_id": section_id,
-                            "elements": [],
-                    }
-                    if text_key not in processed_texts:
-                        processed_texts.add(text_key)
+                        # Ensure we always get the correct parent section ID
+                        section_id = element["metadata"].get("parent_id")  # Use parent_id from metadata
+                        if not section_id:  
+                            continue  
 
-                        relevant_sections[section_id]["elements"].append({
-                            "text": element["text"],
-                        })
+                        if section_id not in relevant_sections:
+                            relevant_sections[section_id] = {
+                                "section_id": section_id,
+                                "title": section_titles.get(section_id, "Unknown Title"),
+                                "elements": [],
+                            }
+                        
+                        if text_key not in processed_texts:
+                            processed_texts.add(text_key)
+                            relevant_sections[section_id]["elements"].append({
+                                "text": element["text"],
+                            })
             else:
                 # Only process relevant element types (Title, NarrativeText, ListItem)
                 if element_type in {"Title", "NarrativeText", "ListItem"}:
@@ -340,13 +339,15 @@ class WebscrapperTool(BaseTool):
                     # Check if any keyword is present in the text
                     if any(keyword in text_lower for keyword in keywords):
                         parent_id = get_parent_id(element)
-                        
+        
                         # If it's a NarrativeText, find its corresponding Title's ID
                         if element_type == "NarrativeText":
-                            section_id = element["metadata"].get("parent_id", parent_id)
+                            section_id = element["metadata"].get("parent_id")
+                            if not section_id:
+                                continue  
                         else:
-                            section_id = parent_id
-                        
+                            section_id = parent_id  # Titles & ListItems use their own ID
+
                         # Determine the section title
                         section_title = section_titles.get(section_id, "Unknown Title")
                         
@@ -374,60 +375,54 @@ class WebscrapperTool(BaseTool):
                             # Only store the position if it's a ListItem or if the section contains ListItems
                             position_info = {}
                             if element_type == "ListItem":
-                                position_info["position"] = position  # Store relative position if applicable
+                                position_info["position"] = position  # Store relative position 
                             
                             relevant_sections[section_id]["elements"].append({
                                 "type": element_type,
                                 "text": element["text"],
                                 "metadata": element["metadata"],
-                                **position_info,  # Merge position information if applicable
+                                **position_info,  # Merge position information 
                             })
 
         return list(relevant_sections.values())  # Return as a list of dictionaries
-    def chunk_large_text(self, text: str, max_tokens: int = 1024) -> List[str]:
-        """
-        Splits large text into LLM-compatible chunks.
-
-        Params:
-            - text (str): Large text.
-            - max_tokens (int): Max token size.
-
-        Returns:
-            - List of text chunks.
-        """
+    def chunk_large_text(self, title:str, elements: List, max_tokens: int = 1024) -> List[str]:
+        
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=max_tokens,
             chunk_overlap=50
         )
-        return splitter.split_text(text)
+        text = " ".join([el["text"] for el in elements])  # Combine section text
+        chunks = splitter.split_text(text)  # Split into manageable parts
+        return [{"title": title, "text": chunk} for chunk in chunks]
     
-    def parse_text(self, text:List[Dict]):
-        pass
+    def generate_summaries(self, relevant_sections) -> List[Dict]:
+        summaries = []
+        for section in relevant_sections:
+            title = section["title"]
+            elements = section["elements"]
+            
+            # Chunk the section
+            chunks = self.chunk_large_text(title, elements)
 
-    def _run(self,keywords: Union[str, list],url:str=None) -> List[Dict]:
+            # Summarize each chunk and combine
+            section_summary = " ".join(self.summarize_text(chunk["title"], chunk["text"]).content for chunk in chunks)
+
+            summaries.append({"title": title, "summary": section_summary})
+        
+        return summaries
+
+    def _run(self,keywords: Union[str, List],url:str=None) -> List[Dict]:
         
         elements = self.parse_html(url=url)
         keywords = keywords if isinstance(keywords, list) else ([keywords] if keywords else None)
         
         extracted_data = self.identify_relevant_passages(elements, keywords)
         return extracted_data
-        # if not extracted_data:
-        #     return [{"message": "No relevant information found."}]
-
         # if keywords is not None:
         #     return extracted_data
         
-        # full_text = " ".join([entry for entry['elements'] in extracted_data])
-
-        # if len(full_text.split()) <= 300:
-        #     return [{"summary": full_text}]
-
-        # text_chunks = self.chunk_large_text(full_text, max_tokens=1024)
-        # summarized_chunks = [self.summarize_text(chunk) for chunk in text_chunks]
-
-        # final_summary = self.summarize_text(" ".join(summarized_chunks))
-
-        # return [{"summary": final_summary}]
+        # if keywords is None:
+        #    return self.generate_summaries(extracted_data)
     
     def _arun(self):
         raise NotImplementedError("This tool does not support async")

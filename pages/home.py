@@ -179,20 +179,33 @@ class HomePage:
         """
         Render the settings popover when the settings button is clicked.
         """
-        st.markdown("<h2>Settings</h2>", unsafe_allow_html=True)
-        st.write("Here you can configure the chatbot settings.")
-        
-        # Placeholder settings options
-        model_choice = st.selectbox("Choose Model", ["Simple Chat", "Chat with pdf", "Agent"])
-        context_length = st.slider("Context Length", min_value=10, max_value=100, value=50)
+        general_tab, session_tab, other_tab = st.tabs(["Home", "Session", "Other"]) # Here the session tab will allow the user to see the different type of llm already in use(llm_instances)
+        with general_tab:
+            st.header("General Settings")
+            # Now we need to add what they do directly on the right 
+            delete_tab, logout, change = st.columns(3)
+            # Deleting chat history for this account
+            if delete_tab.button("Delete Chat", key="delete_button", help="Permanently remove all chat history for this account"):
+                pass
+            
+            st.divider()  
+            if logout:
+                col1, col2 = st.columns(2)
 
-        if st.button("Submit"):
-            # Save the settings (example: store them in `st.session_state` or pass to `self.app`)
-            st.session_state.chat_settings = {
-                "model": model_choice,
-                "context_length": context_length,
-            }
-            st.success("Settings updated successfully!")
-            st.rerun()
+                col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account")
+                col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data")
+            
+            st.divider() 
+            # Change the localhost if there's a need to change 
+            local_host = st.text_input("Localhost",value="8501",key="localhost")
+            if st.button("Submit",key="submit_settings_popover"):
+                st.session_state.local_host = local_host
+
+        with session_tab:
+            st.header("Session settings")
+            st.write("Here you can observe the chatbot settings that are already in use since you logged.")
+            params = {}
+
+            
 
 

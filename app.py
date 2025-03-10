@@ -294,10 +294,25 @@ class ChatbotApp:
         general_tab, session_tab, other_tab = st.tabs(["Home", "Session", "Other"])
         with general_tab:
             st.header("General Settings")
+            # Now we need to add what they do directly on the right 
+            delete_tab, logout, change = st.columns(3)
             # Deleting chat history for this account
-            # Log out of this account or delete this account
-            # Change the localhost if there's a need to change 
+            if delete_tab.button("Delete Chat", key="delete_button", help="Permanently remove all chat history for this account"):
+                pass
+            
+            st.divider()  
+            if logout:
+                col1, col2 = st.columns(2)
 
+                col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account")
+                col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data")
+            
+            st.divider() 
+            # Change the localhost if there's a need to change 
+            local_host = st.text_input("Localhost",value="8501",key="localhost")
+            if st.button("Submit",key="submit_settings_popover"):
+                st.session_state.local_host = local_host
+                
         if st.session_state.active_page == "chat":
             with session_tab:
                 st.markdown("<h2>Session settings</h2>", unsafe_allow_html=True)

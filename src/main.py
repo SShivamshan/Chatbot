@@ -3,9 +3,9 @@ sys.path.append(".")
 from app import ChatbotApp
 
 # TODO: 
-#       reimprove the webscrapper to retrieve only the core elements webscrapper tool test it alone and then with agent
+#       reimprove the the web scrapping type classification and then conncetion to run_web_scrapper after the node classification for the web scrapping
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 
-#       Finish settings and config.toml
+#       Finish settings and config.toml -> do it every friday
 #       Finish documentation 
 #       Create a script for the ollama server
 #       Create a method to ensure security for the app.db
