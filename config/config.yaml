@@ -274,16 +274,21 @@ Agent_templates:
 
         You are an expert in query classification for web scraping tasks.  
         Given a user query, your job is to:  
-        
+
         - Determine whether the user is requesting **specific information** or a **general summary** from a webpage.  
         - Extract the **URL** if present in the query.  
         - If the user requests **specific information**, extract the key topic or data point they need.  
-        
-        **Query:** {query}  
 
-        The type of categories:  
-        - **general_summary**: If the query asks for general information present within the given URL.  
-        - **specific_information**: If the query asks for a specific piece of information present within the given URL.  
+        ### **Category Definitions**
+        - **general_summary**: The user asks for a broad overview of the page's content, main topics, or general discussion points.  
+          - Example: *"What are they talking about in this {{url}}?"*  
+          - Example: *"Summarize the contents of {{url}}."*  
+
+        - **specific_information**: The user asks for a precise data point from the page (e.g., a price, name, date, statistic).  
+          - Example: *"What is the CEO's name on {{url}}?"*  
+          - Example: *"What is the stock price listed on {{url}}?"*  
+
+        **Query:** {query}  
 
         **Output JSON Format:**  
         ```json
@@ -291,8 +296,7 @@ Agent_templates:
             "category": "general_summary" | "specific_information",
             "url": "string",
             "elements_to_retrieve": ["string"]
-        }}
-        ```
+        }}```
 
         <|eot_id|>
 

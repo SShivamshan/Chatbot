@@ -82,14 +82,18 @@ To run the chatbot application, execute the following command from the project r
 - Integration with ChromaDB for efficient storage
 - Agents that does the same things as RAG but with the ability to run a search on the web through keywords. 
 - Further addition of machine learning and chat bot mix
-- Possible to offload a model from the GPU when switching between sessions or logging out. 
+- Offloads the model from the GPU when switching between sessions or logging out. 
+- Possibility of running the agent in the command line by running the run_agent python file. 
 
 ## Dependencies
 
-- Python        3.7+
-- Streamlit     1.41.0
-- Ollama        0.5.1
-- Langchain     0.3.9 
+- Python                3.7+
+- Streamlit             1.41.0
+- Ollama                0.5.1
+- Langchain             0.3.9 
+- Langgraph             0.3.2
+- Langchain-chroma      0.2.0
+- Langchain-community   0.3.9
 
 Since we use ``unstructured`` module directly, it requires the installation of dependencies which are quiet troublesome. 
 Since the application is primarily based on PDF files, we need to install the following dependencies : 
@@ -146,8 +150,9 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 
 ## Improvements
 
-1. Right now the pdf can only be added one by one and can only render one pdf at the time. Tried to use st.tabs to render the pdf per tabs but only the first tab is rendered. 
+1. Right now the pdf can only be added one by one and can only render one pdf at the time. Tried to use st.tabs to render the pdf per tabs but only the first tab is getting rendered. 
 2. Takes some time to chunks the pdf when using unstructured module especially true when retreiving tables and images. 
 3. Perhaps add some javascript components. 
 4. Improvements linked to constrained environments. 
 5. Possibly adding docker support 
+6. Possibility of adding the configuration to interact with google applications. 

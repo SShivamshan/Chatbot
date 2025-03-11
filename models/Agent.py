@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain.tools.render import render_text_description_and_args
 from models.Model import Chatbot
 from src.utils import *
+from src.AgentLogger import AgentLogger
 
 # SOLUTION adopted from : https://medium.com/@sahin.samia/how-to-build-a-interactive-personal-ai-research-agent-with-llama-3-2-b2a390eed63e 
 # https://langchain-ai.github.io/langgraph/tutorials/introduction/#part-1-build-a-basic-chatbot 
@@ -22,6 +23,8 @@ class GraphState(TypedDict):
     keywords: Optional[List[str]]
     search_results: Optional[List[Dict[str, Any]]]
     scrape_results: Optional[List[Dict[str, Any]]]
+    scrape_url: Optional[str]
+    elements_to_retrieve: Optional[List[str]]
     final_answer: Optional[str]
     final_json: Optional[Dict[str, Any]]
 
@@ -35,13 +38,16 @@ class Agent(BaseModel):
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     question_to_keywords: Optional[Any] = Field(default=None, exclude=True)
     query_web_scrape: Optional[Any] = Field(default=None, exclude=True)
-    
+    logger: Optional[Any] = Field(default=None, exclude=True)
+
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
         model_name: str = "llama3.2:3b",
         context_length: int = 18000,
-        chatbot: Optional[Any] = None
+        chatbot: Optional[Any] = None,
+        log_level: int = logging.INFO,
+        pretty_print: bool = True
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__(
@@ -49,16 +55,21 @@ class Agent(BaseModel):
             model_name=model_name,
             context_length=context_length
         )
+        # Initialize logger
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print)
+        self.logger.logger.info(f"Initializing Agent with model: {model_name}")
+
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
             model=model_name,
             context_length=context_length
         )
+        self.logger.logger.info("LLM initialized")
         # Initialize components
         self.tools = self.initialize_tools()
         self.ai_template = load_ai_template('config/config.yaml')
-        
+        self.logger.logger.info("Tools and templates loaded")
         # Initialize agent chains
         QUERY_IDENTIFICATION_PROMPT = self._query_identification_template()
         self.question_routing = QUERY_IDENTIFICATION_PROMPT | self.llm | JsonOutputParser()
@@ -68,9 +79,11 @@ class Agent(BaseModel):
 
         QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._query_web_scrape_template()
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
-        
+        self.logger.logger.info("Agent chains initialized")
+
     def _query_identification_template(self):
         try:
+            self.logger.logger.debug("Loading query identification template")
             templates = load_ai_template(config_path="config/config.yaml")
             template_config = templates["Agent_templates"]["Query_identification_template"]
             template = template_config["template"]
@@ -80,10 +93,12 @@ class Agent(BaseModel):
                 input_variables=input_variables
             )
         except Exception as e:
+            self.logger.log_error("_query_identification_template", e)
             raise ValueError(f"Failed to initialize query identification: {str(e)}")
     
     def _query_web_template(self):
         try:
+            self.logger.logger.debug("Loading query web template")
             templates = load_ai_template(config_path="config/config.yaml")
             template_config = templates["Agent_templates"]["Query_web_template"]
             template = template_config["template"]
@@ -93,10 +108,12 @@ class Agent(BaseModel):
                 input_variables=input_variables
             )
         except Exception as e:
+            self.logger.log_error("_query_web_template", e)
             raise ValueError(f"Failed to initialize query web: {str(e)}")
         
     def _query_web_scrape_template(self):
         try:
+            self.logger.logger.debug("Loading query web scrape template")
             templates = load_ai_template(config_path="config/config.yaml")
             template_config = templates["Agent_templates"]["Query_web_scrape_classification"]
             template = template_config["template"]
@@ -106,10 +123,12 @@ class Agent(BaseModel):
                 input_variables=input_variables
             )
         except Exception as e:
+            self.logger.log_error("_query_web_scrape_template", e)
             raise ValueError(f"Failed to initialize web scrape query classification: {str(e)}")
 
     
     def initialize_tools(self):
+        self.logger.logger.debug("Initializing tools")
         # Instantiate the CustomSearchTool
         custom_search_tool = CustomSearchTool()
         # Instantiate the WebscrapperTool
@@ -121,11 +140,12 @@ class Agent(BaseModel):
         return tools
     
 
-    def format_scraper_content(content):
+    def format_scraper_content(self,content):
         """
         Formats content from the web scraper into a consistent text format.
         Handles different possible structures of the scraped content.
         """
+        self.logger.logger.debug("Formatting scraper content")
         formatted_text = ""
         
         # Case 1: Content is a list of sections with title and elements
@@ -158,22 +178,35 @@ class Agent(BaseModel):
         
     def create_graph(self):
         """Create a LangGraph workflow for agent operations."""
+        self.logger.logger.info("Creating agent workflow graph")
         workflow = StateGraph(GraphState)
+        logger = self.logger
 
         # 1. Identify query type
         def identify_query(state: GraphState) -> GraphState:
+            node_name = "identify_query"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
             result = self.question_routing.invoke({"query": state["query"]})
-            print(f"result:{result}")
-            return {
+            # logger.logger.info(f"Query identification result: {result}")
+
+            # print(f"result:{result}")
+            updated_state = {
                 **state,
                 "category": result.get("category", []),
                 "confidence": result.get("confidence", 0),
                 "reasoning": result.get("reasoning", ""),
                 "required_tools": result.get("required_tools", [])
             }
+            
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
         # 2. Extract keywords (for web search OR for specific information scraping)
         def extract_keywords(state: GraphState) -> GraphState:
+            node_name = "extract_keywords"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
             query_type = "web_search"
             
             # Check if this is for specific information scraping
@@ -181,12 +214,15 @@ class Agent(BaseModel):
                 "web_scrape" in state.get("required_tools", [])):
                 query_type = "web_scrape"
                 
+            logger.logger.debug(f"Extracting keywords for query type: {query_type}")
             result = self.question_to_keywords.invoke({
                 "query": state["query"],
                 "query_type": query_type
             })
             
-            return {**state, "keywords": result.get("keywords", [])}
+            updated_state = {**state, "keywords": result.get("keywords", [])}
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
         # 3. Classify scrape query 
         def classify_scrape_query(state: GraphState) -> GraphState:
@@ -194,36 +230,63 @@ class Agent(BaseModel):
             Uses the LLM to classify a web scraping query.
             Determines whether to extract a general summary or specific elements.
             """
+            node_name = "classify_scrape_query"
+            node_start_time = logger.log_node_entry(node_name, state)
+            # logger.logger.info(f"Before classify_scrape_query: {state}")
+
             result = self.query_web_scrape.invoke({"query": state["query"]})
+            # logger.logger.info(f"Web scrape classification result: {result}")
+            
             updated_state = {
                 **state,
                 "category": result.get("category", ""),
-                "scrape_url": result.get("url", ""),  
-                "elements_to_retrieve": result.get("elements_to_retrieve", [])
+                "scrape_url": result.get("url", state.get("scrape_url", "")), 
+                "elements_to_retrieve": result.get("elements_to_retrieve", state.get("elements_to_retrieve", []))
             }
-            print(f"Updated state after classification: {updated_state}") 
+            logger.logger.info(f"After classify_scrape_query: {updated_state}")
+
+            logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
         # 4. Web search handler
         def run_web_search(state: GraphState) -> GraphState:
+            node_name = "web_search"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
             keywords = state.get("keywords", [])
             if not keywords:
-                return {**state, "search_results": []}
+                logger.logger.warning("No keywords provided for web search")
+                updated_state = {**state, "search_results": []}
+                logger.log_node_exit(node_name, updated_state, node_start_time)
+                return updated_state
 
             search_query = " ".join(keywords)
-            search_results = self.tools["web_search"].run(search_query)
-            return {**state, "search_results": search_results}
+            # logger.logger.info(f"Running web search with query: {search_query}")
+            
+            # Log the tool call
+            logger.log_tool_call("web_search", {"query": search_query})
+            search_results = self.tools["web_search"]._run(search_query)
+            
+            # Log the results
+            logger.log_tool_call("web_search", {"query": search_query}, 
+                               f"Found {len(search_results)} results")
+            
+            updated_state = {**state, "search_results": search_results}
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+
 
         # 5. Web scraper handler
         def run_web_scraper(state: GraphState) -> GraphState:
             """
             Runs web scraping using the classified query data.
             """
-            print("Running web scrape : ", state)
+            node_name = "web_scrape"
+            node_start_time = logger.log_node_entry(node_name, state)
+            # logger.logger.info(f"Before web_scrape: {state}")
             url = state.get("scrape_url", "")
-            # Determine what to extract
             extraction_type = state.get("category", "")
-            print(f"Running web scraper for URL: {url} with extraction type: {extraction_type}")
+            # logger.logger.info(f"Running web scraper for URL: {url} with extraction type: {extraction_type}")
             
             if extraction_type == "specific_information":
                 keywords = state.get("keywords", [])
@@ -231,20 +294,34 @@ class Agent(BaseModel):
                 keywords = state.get("elements_to_retrieve", [])
 
             if not url:
-                return {**state, "scrape_results": [{"error": "No valid URL provided for web scraping"}]}
+                logger.logger.warning("No valid URL provided for web scraping")
+                updated_state = {**state, "scrape_results": [{"error": "No valid URL provided for web scraping"}]}
+                logger.log_node_exit(node_name, updated_state, node_start_time)
+                return updated_state
 
-            raw_content = self.tools["web_scrapper"].run({
-                "url": url,
-                "keywords": keywords  # Extract specific semantic information
-            })
-            print(raw_content)
+            # Log the tool call
+            tool_inputs = {"keywords": keywords, "url":url}
+            logger.log_tool_call("web_scrapper", tool_inputs)
+            
+            # Execute the scraping
+            raw_content = self.tools["web_scrapper"]._run(keywords=keywords, url=url)
+            
+            # Format the content
             formatted_content = self.format_scraper_content(raw_content)
-    
-            return {**state, "scrape_results": [{"query": state["query"], "content": formatted_content}]}
+            logger.logger.debug(f"Formatted content length: {len(formatted_content)} characters")
+            
+            updated_state = {**state, "scrape_results": [{"query": state["query"], "content": formatted_content}]}
+            # logger.logger.info(f"After web_scrape: {updated_state}")
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
 
         # 6. Generate final answer
         def generate_answer(state: GraphState) -> GraphState:
+            # Extract scrape results content
+            node_name = "generate_answer"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
             # Extract scrape results content
             scrape_content = ""
             if state.get("scrape_results"):
@@ -267,8 +344,13 @@ class Agent(BaseModel):
             Do not include any citations or source links in your answer - I will add those separately.
             """
 
+            logger.logger.debug("Generating final answer with LLM")
             answer_content = self.llm.invoke(prompt)
-            return {**state, "final_answer": answer_content}
+            # logger.logger.info(f"Generated answer of length: {len(answer_content.content)} characters")
+            
+            updated_state = {**state, "final_answer": answer_content}
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
         # Add nodes
         workflow.add_node("identify_query", identify_query)
@@ -290,26 +372,36 @@ class Agent(BaseModel):
             if "web_scrape" in required_tools:
                 next_nodes.append("classify_scrape_query")  # First classify the web scraping query
 
-            return next_nodes or ["generate_answer"]
+            result = next_nodes or ["generate_answer"]
+            logger.log_decision("identify_query", result)
+            return result
 
         def route_after_keywords(state: GraphState) -> List[str]:
             if "web_search" in state.get("required_tools", []):
-                return ["web_search"]
+                result = ["web_search"]
             else:
-                return ["generate_answer"]
+                result = ["generate_answer"]
+            logger.log_decision("extract_keywords", result)
+            return result
 
         def route_after_search(state: GraphState) -> List[str]:
-            return ["generate_answer"]
+            result = ["generate_answer"]
+            logger.log_decision("web_search", result)
+            return result
             
         def route_after_scrape_classification(state: GraphState) -> List[str]:
-            print(f"🔍 Routing after classification: {state}")
+            # logger.logger.info(f"Route after scrape classification : {state}")
             if state.get("category") == "specific_information":
-                return ["extract_keywords"]
+                result = ["extract_keywords"]
             else:
-                return ["web_scrape"]
-                
+                result = ["web_scrape"]
+            logger.log_decision("classify_scrape_query", result)
+            return result
+                 
         def route_after_web_scraper(state: GraphState) -> List[str]:
-            return ["generate_answer"]
+            result = ["generate_answer"]
+            # logger.log_decision("web_scrape", result)
+            return result
         
         # Connect nodes
         workflow.add_conditional_edges("identify_query", route_after_identification)
@@ -325,19 +417,30 @@ class Agent(BaseModel):
 
     def initialize_agent(self):
         """Initialize the agent with LangGraph."""
+        self.logger.logger.info("Initializing agent workflow")
         # Create the graph
         graph = self.create_graph()
         
         # Compile the graph
+        self.logger.logger.info("Compiling agent workflow graph")
         executor = graph.compile()
         
         return executor
     
     def run(self, query: str):
         """Run the agent with the given query."""
-        executor = self.initialize_agent()
-        result = executor.invoke({"query": query})
-        return result.get("final_answer", "No answer generated.")
+        self.logger.start_agent_run(query)
+        self.logger.logger.info(f"Running agent with query: {query}")
+        
+        try:
+            executor = self.initialize_agent()
+            result = executor.invoke({"query": query})
+            self.logger.end_agent_run(result)
+            return result.get("final_answer", "No answer generated.")
+        except Exception as e:
+            self.logger.log_error("agent_run", e)
+            self.logger.logger.error(f"Agent run failed: {str(e)}")
+            return f"Error running agent: {str(e)}"
 
 
 

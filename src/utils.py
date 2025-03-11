@@ -20,7 +20,8 @@ import chromadb
 from pydantic import Field, BaseModel
 from PyPDF2 import PdfReader
 from bs4 import BeautifulSoup, ProcessingInstruction
-
+from rich.console import Console
+from rich.panel import Panel
 
 # LangChain imports
 from langchain.docstore.document import Document
@@ -296,23 +297,47 @@ class WebscrapperTool(BaseTool):
         return self.llm.invoke(prompt.format(text=text, title=title))
 
     def identify_relevant_passages(self, elements: List[Text], keywords: List[str]) -> List[Dict]:
+        """
+        Identifies and extracts relevant passages from a list of text elements based on given keywords.
+
+        This function processes a list of text elements, identifying relevant sections based on the presence
+        of specified keywords. It organizes the relevant content into structured sections, handling different
+        types of elements such as titles, narrative text, and list items.
+
+        params
+        ------
+            - elements (List[Text]): A list of Text objects representing the content to be processed.
+            - keywords (List[str]): A list of keywords to identify relevant passages. If None, all passages are considered relevant.
+
+        returns
+        -------
+            List[Dict]: A list of dictionaries, each representing a relevant section. Each dictionary contains:
+                - 'section_id': The ID of the section
+                - 'title': The title of the section
+                - 'elements': A list of dictionaries, each containing the relevant text and metadata
+
+        The function handles different scenarios:
+        - When keywords are provided, it extracts passages containing those keywords.
+        - When keywords are None, it extracts all Title and NarrativeText elements.
+        - It maintains the structure and hierarchy of the content, including list item positions.
+        """
         relevant_sections = {}
         processed_texts = set()
         section_titles = {}
         position_counters = {}
-        
+
         for element in elements:
             element = element.to_dict()
             element_type = element["type"]
-            
+
             # Store title if the element is a Title
             if element_type == "Title":
                 section_titles[element["element_id"]] = element["text"]
-            
+
             if keywords is None:
                 if element_type in {"Title", "NarrativeText"}:
                     text_key = (element["element_id"], element["text"])
-                
+
                     if element_type == "NarrativeText":
                         # Ensure we always get the correct parent section ID
                         section_id = element["metadata"].get("parent_id")  # Use parent_id from metadata
@@ -325,7 +350,7 @@ class WebscrapperTool(BaseTool):
                                 "title": section_titles.get(section_id, "Unknown Title"),
                                 "elements": [],
                             }
-                        
+
                         if text_key not in processed_texts:
                             processed_texts.add(text_key)
                             relevant_sections[section_id]["elements"].append({
@@ -335,11 +360,11 @@ class WebscrapperTool(BaseTool):
                 # Only process relevant element types (Title, NarrativeText, ListItem)
                 if element_type in {"Title", "NarrativeText", "ListItem"}:
                     text_lower = element["text"].lower()
-                    
+
                     # Check if any keyword is present in the text
                     if any(keyword in text_lower for keyword in keywords):
                         parent_id = get_parent_id(element)
-        
+
                         # If it's a NarrativeText, find its corresponding Title's ID
                         if element_type == "NarrativeText":
                             section_id = element["metadata"].get("parent_id")
@@ -350,7 +375,7 @@ class WebscrapperTool(BaseTool):
 
                         # Determine the section title
                         section_title = section_titles.get(section_id, "Unknown Title")
-                        
+
                         # Initialize section if not already stored
                         if section_id not in relevant_sections:
                             relevant_sections[section_id] = {
@@ -371,12 +396,12 @@ class WebscrapperTool(BaseTool):
                         text_key = (section_id, element["text"])  
                         if text_key not in processed_texts:
                             processed_texts.add(text_key)
-                            
+
                             # Only store the position if it's a ListItem or if the section contains ListItems
                             position_info = {}
                             if element_type == "ListItem":
                                 position_info["position"] = position  # Store relative position 
-                            
+
                             relevant_sections[section_id]["elements"].append({
                                 "type": element_type,
                                 "text": element["text"],
@@ -411,21 +436,32 @@ class WebscrapperTool(BaseTool):
         
         return summaries
 
-    def _run(self,keywords: Union[str, List],url:str=None) -> List[Dict]:
-        
+    def _run(self,keywords: Union[str, List],url:str) -> List[Dict]:
+
         elements = self.parse_html(url=url)
-        keywords = keywords if isinstance(keywords, list) else ([keywords] if keywords else None)
-        
+        keywords = [keywords] if isinstance(keywords, str) else (keywords if isinstance(keywords, list) and keywords else None)
+        print(keywords)
         extracted_data = self.identify_relevant_passages(elements, keywords)
-        return extracted_data
-        # if keywords is not None:
-        #     return extracted_data
         
-        # if keywords is None:
-        #    return self.generate_summaries(extracted_data)
+        if keywords:
+            print("Here")
+            return extracted_data
+        elif keywords is None:
+           print("Gnereating summaries")
+           return self.generate_summaries(extracted_data)
     
     def _arun(self):
         raise NotImplementedError("This tool does not support async")
+
+
+class DateTimeTool(BaseTool):
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self):
+        super().__init__()
+        
+
 
 
 def parse_flags_and_queries(input_text: str) -> dict[str, str]:
@@ -442,25 +478,33 @@ def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     -------
         dict: A dictionary where keys are flags (e.g., '/code') and values are the queries.
     """
-    # Remove leading/trailing whitespace.
     input_text = input_text.strip()
-    
-    # Define a pattern that matches flags and their corresponding text.
     pattern = r"(\/\w+)([^\/]*)"
     
-    # Find all matches in the input text.
     matches = re.findall(pattern, input_text)
-    
-    # Create a dictionary to store flags and their queries.
     flag_query_dict = {}
     
     for flag, query in matches:
-        # Clean up the query by stripping extra whitespace.
         flag_query_dict[flag] = query.strip()
     
     return flag_query_dict
 
-    
+def pretty_print_answer(answer):
+    """
+    Prints the given answer in a formatted panel using the 'rich' library.
+
+    params
+    ------
+        - answer (str): The answer to be printed.
+
+    returns
+    -------
+        None. The function prints the answer in a formatted panel.
+    """
+    console = Console()
+    panel = Panel.fit(answer, title="FINAL Answer", border_style="bold cyan")
+    console.print(panel)
+
 def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Document, str]]:
     """
     Deduplicates retrieved documents (instances of Document), keeping only the highest-scoring version of each,
