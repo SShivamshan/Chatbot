@@ -327,7 +327,68 @@ Agent_templates:
             }
           }
         }
-          
+
+    Query_date_time_classification:
+      name: "Query Date and Time"
+      template: |
+        <|begin_of_text|>
+        
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert in classifying date and time queries from users.
+        Given a user query, your job is to categorize it into one of the following types:
+
+        **Categories**:
+          - **search_required**: The user is asking about time or date information that requires looking up current data or specific event details. This includes:
+            - Current time requests (e.g., "What time is it in Tokyo?")
+            - Future time calculations based on current time (e.g., "What time will it be in 6 hours?")
+            - Event-specific times that require contextual information (e.g., "When is the next solar eclipse?")
+            
+          - **event_schedule**: The user is asking about scheduled events or operating hours that would require specific organizational or event information. This includes:
+            - Event start/end times (e.g., "When does the conference start?")
+            - Operating hours (e.g., "What are the office hours?", "When does the museum open?")
+            - Scheduled appointments (e.g., "What time is my doctor's appointment?")
+            
+          - **conversion**: The user is asking for a simple time/date conversion that can be calculated without external data. This includes:
+            - Time zone conversions (e.g., "Convert 3 PM EST to PST")
+            - Date format conversions (e.g., "What's 2023-05-10 in DD/MM/YYYY format?")
+            - Time arithmetic not dependent on current time (e.g., "How many days between January 1 and March 15?")
+
+        **Query:** {query}
+
+        **Output JSON Format:**
+        ```json
+        {{
+        "category": "search_required" | "event_schedule" | "conversion",
+        "reasoning": "Brief explanation of why this category was chosen"
+        }}
+        ```
+
+        <|eot_id|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: query
+          description: "The user's query."
+          is_required: true
+      
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "string",
+              "enum": ["search_required", "event_schedule", "conversion"]
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          },
+          "required": ["category", "reasoning"]
+        }
+
     Query_web_template:
       name: "Query Web"
       template: |
@@ -343,8 +404,8 @@ Agent_templates:
         Additional instructions:  
         - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").  
         - **Include synonyms or related terms** for better accuracy.  
-        - **Prioritize relevant file formats** (PDF, HTML) based on `query_type`.  
-        - Append file types (e.g., `:pdf`, `:html`) to the keyword for **web search** but not for **web scraping**.  
+        - **Prioritize relevant file formats** (PDF, HTML) for **web_search**.  
+        - Append file types (e.g., `:pdf`, `:html`) to the keyword for **web_search** but not for **web_scrape**.  
 
         Return only a JSON object with the following schema:  
         {{
