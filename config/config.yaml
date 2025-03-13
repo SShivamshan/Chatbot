@@ -445,3 +445,64 @@ Agent_templates:
           },
           "required": ["keywords"]
         }
+
+    Code_research_template:
+      name: Code_research_template
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an AI assistant designed to assist another agent responsible for generating code for a given query.  
+        Your task is to provide a structured list of **steps** or **processes** that the agent should follow to produce correct code.  
+
+        - The steps should give a **high-level overview** of the process.  
+        - However, where necessary, include a **few key low-level details** within two steps to ensure correctness.  
+
+        **Each step must:**  
+        - Logically follow the previous one and contribute to the final implementation.  
+        - Maintain clarity and ensure the process is easy to follow.  
+
+        **Query to analyze:** {query}  
+
+        **Return ONLY a JSON object** following this schema:  
+        ```json
+        {{
+          "steps": ["Step 1 description", "Step 2 description", "Step 3 description", ...]
+        }}
+        ```
+
+        **Example Output Format:**  
+        - **For a query like** `"Implement a neural network for image classification"`  
+        **Return:**
+        ```json
+        {{
+          "steps": [
+            "Choose a deep learning framework (e.g., TensorFlow, PyTorch).",
+            "Load and preprocess the image dataset (resize images, normalize pixel values).",
+            "Define the neural network architecture (e.g., convolutional layers for feature extraction).",
+            "Compile the model, setting the optimizer (Adam, SGD) and loss function (cross-entropy).",
+            "Train the model using labeled data, monitoring accuracy and loss.",
+            "Evaluate and fine-tune the model to improve generalization.",
+            "Deploy the model for inference using a suitable API or cloud service."
+          ]
+        }}
+        ```
+
+      input_variables:
+        - name: query
+          description: The query or task description requiring code generation.
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema:
+          type: "object"
+          properties:
+            steps:
+              type: "array"
+              items:
+                type: "string"
+              description: "A sequential list of steps to guide code generation, maintaining high-level clarity with some essential low-level details."
+          required: ["steps"]
+

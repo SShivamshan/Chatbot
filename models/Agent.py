@@ -27,6 +27,12 @@ class GraphState(TypedDict):
     elements_to_retrieve: Optional[List[str]]
     final_answer: Optional[str]
     final_json: Optional[Dict[str, Any]]
+    steps: Optional[List[str]]
+    final_code: Optional[str]
+    generated_code: Optional[str]
+    critique_feedback: Optional[str]
+    is_code_valid: Optional[bool]
+    iterations_left: Optional[int]
 
 class Agent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -38,8 +44,9 @@ class Agent(BaseModel):
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     question_to_keywords: Optional[Any] = Field(default=None, exclude=True)
     query_web_scrape: Optional[Any] = Field(default=None, exclude=True)
+    code_research: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
-
+    
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -79,6 +86,9 @@ class Agent(BaseModel):
 
         QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._query_web_scrape_template()
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
+
+        CODE_RESEARCH_PROMPT = self._code_research_template()
+        self.code_research = CODE_RESEARCH_PROMPT | self.llm | JsonOutputParser()
         self.logger.logger.info("Agent chains initialized")
 
     def _query_identification_template(self):
@@ -126,16 +136,34 @@ class Agent(BaseModel):
             self.logger.log_error("_query_web_scrape_template", e)
             raise ValueError(f"Failed to initialize web scrape query classification: {str(e)}")
 
+    def _code_research_template(self):
+        try:
+            self.logger.logger.debug("Loading code research template")
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"]["Code_research_template"]
+            template = template_config["template"]
+            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
+            return PromptTemplate(
+                template=template,
+                input_variables=input_variables
+            )
+        except Exception as e:
+            self.logger.log_error("_code_research_template", e)
+            raise ValueError(f"Failed to initialize code research template: {str(e)}")
     
     def initialize_tools(self):
         self.logger.logger.debug("Initializing tools")
-        # Instantiate the CustomSearchTool
+        # Instantiate the tools
         custom_search_tool = CustomSearchTool()
-        # Instantiate the WebscrapperTool
         webscrapper_tool = WebscrapperTool(llm=self.llm)
+        generate_code_tool = CodeGeneratorTool(llm=self.llm)
+        code_review_tool = CodeReviewTool(llm=self.llm)
+
         tools = {
             "web_search": custom_search_tool,
-            "web_scrapper": webscrapper_tool
+            "web_scrapper": webscrapper_tool,
+            "code_generator": generate_code_tool,
+            "code_critique": code_review_tool
         }
         return tools
     
@@ -199,6 +227,17 @@ class Agent(BaseModel):
                 "required_tools": result.get("required_tools", [])
             }
             
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+
+        def code_research(state: GraphState) -> GraphState:
+            node_name = "code_research"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
+            logger.logger.info(f"Performing code research on: {state['query']}")
+            result = self.code_research.invoke({"query": state["query"]})
+            
+            updated_state = {**state, "code_research_results": result.get("steps", [])}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -315,6 +354,46 @@ class Agent(BaseModel):
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
+        def generate_code(state: GraphState) -> GraphState:
+            node_name = "generate_code"
+            node_start_time = self.logger.log_node_entry(node_name, state)
+
+            # Call the code generation tool
+            code_result = self.tools["code_generator"]._run(state["query"])
+
+            updated_state = {**state, "generated_code": code_result}
+            self.logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+
+        def critique_code(state: GraphState) -> GraphState:
+            node_name = "critique_code"
+            node_start_time = self.logger.log_node_entry(node_name, state)
+
+            if not state.get("generated_code"):
+                self.logger.logger.warning("No generated code to critique.")
+                return state  # Skip if no code
+
+            # Call the critique tool (runs tests & linting)
+            critique_result = self.tools["code_critique"]._run(state["generated_code"])
+
+            updated_state = {
+                **state,
+                "critique_feedback": critique_result["feedback"],
+                "is_code_valid": critique_result["is_valid"],
+                "iterations_left": state.get("iterations_left", 3) - 1
+            }
+            self.logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+        
+        def final_code_output(state: GraphState) -> GraphState:
+            node_name = "final_code_output"
+            node_start_time = self.logger.log_node_entry(node_name, state)
+
+            final_code = state.get("generated_code", "No final code available.")
+            updated_state = {**state, "final_code": final_code}
+
+            self.logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
         # 6. Generate final answer
         def generate_answer(state: GraphState) -> GraphState:
@@ -332,13 +411,16 @@ class Agent(BaseModel):
             
             # Format search results if present
             search_content = json.dumps(state.get("search_results", []), indent=2)
-            
+            final_code = json.dumps(state.get("final_code", []),indent= 2)
+
             prompt = f"""
             Query: {state["query"]}
 
             {"Search Results: " + search_content if state.get("search_results") else ""}
 
             {"Scraped Content: " + scrape_content if scrape_content else ""}
+
+            {"Code:" + final_code if state.get("final_code") else ""}
 
             Based on the information above, provide a comprehensive answer to the query.
             Do not include any citations or source links in your answer - I will add those separately.
@@ -351,7 +433,7 @@ class Agent(BaseModel):
             updated_state = {**state, "final_answer": answer_content}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
-
+        
         # Add nodes
         workflow.add_node("identify_query", identify_query)
         workflow.add_node("extract_keywords", extract_keywords)
@@ -359,6 +441,10 @@ class Agent(BaseModel):
         workflow.add_node("classify_scrape_query", classify_scrape_query)
         workflow.add_node("web_scrape", run_web_scraper)
         workflow.add_node("generate_answer", generate_answer)
+        workflow.add_node("code_research", code_research)
+        workflow.add_node("generate_code", generate_code)
+        workflow.add_node("critique_code", critique_code)
+        workflow.add_node("final_code_output", final_code_output)
 
         # Define edges
         workflow.set_entry_point("identify_query")
@@ -371,6 +457,8 @@ class Agent(BaseModel):
                 next_nodes.append("extract_keywords")  # Web search needs keyword extraction
             if "web_scrape" in required_tools:
                 next_nodes.append("classify_scrape_query")  # First classify the web scraping query
+            if "code" in required_tools:
+                next_nodes.append("code_research")  # Code research needs code execution
 
             result = next_nodes or ["generate_answer"]
             logger.log_decision("identify_query", result)
@@ -384,10 +472,10 @@ class Agent(BaseModel):
             logger.log_decision("extract_keywords", result)
             return result
 
-        def route_after_search(state: GraphState) -> List[str]:
-            result = ["generate_answer"]
-            logger.log_decision("web_search", result)
-            return result
+        # def route_after_search(state: GraphState) -> List[str]:
+        #     result = ["generate_answer"]
+        #     logger.log_decision("web_search", result)
+        #     return result
             
         def route_after_scrape_classification(state: GraphState) -> List[str]:
             # logger.logger.info(f"Route after scrape classification : {state}")
@@ -398,18 +486,36 @@ class Agent(BaseModel):
             logger.log_decision("classify_scrape_query", result)
             return result
                  
-        def route_after_web_scraper(state: GraphState) -> List[str]:
-            result = ["generate_answer"]
-            # logger.log_decision("web_scrape", result)
-            return result
+        # def route_after_web_scraper(state: GraphState) -> List[str]:
+        #     result = ["generate_answer"]
+        #     # logger.log_decision("web_scrape", result)
+        #     return result
+        
+        def route_code_loop(state: GraphState) -> List[str]:
+            """Loop between generation and critique until the code is valid or iterations run out."""
+            if state.get("is_code_valid") or state.get("iterations_left", 3) <= 0:
+                return ["final_code_output"]
+            return ["generate_code"]
+        
+        # def route_final_code_output(state: GraphState) -> List[str]:
+        #     result = ["generate_answer"]
+        #     logger.log_decision("final_code_output", result)
+        #     return result
         
         # Connect nodes
         workflow.add_conditional_edges("identify_query", route_after_identification)
         workflow.add_conditional_edges("extract_keywords", route_after_keywords)
-        workflow.add_conditional_edges("web_search", route_after_search)
+        # workflow.add_conditional_edges("web_search", route_after_search)
         workflow.add_conditional_edges("classify_scrape_query", route_after_scrape_classification)
-        workflow.add_conditional_edges("web_scrape", route_after_web_scraper)
-
+        # workflow.add_conditional_edges("web_scrape", route_after_web_scraper)
+        workflow.add_conditional_edges("critique_code", route_code_loop)
+        # workflow.add_conditional_edges("final_code_output", route_final_code_output)
+        workflow.add_edge("code_research","generate_code")
+        workflow.add_edge("generate_code", "critique_code")
+        
+        workflow.add_edge("web_search", "generate_answer")
+        workflow.add_edge("web_scrape", "generate_answer")
+        workflow.add_edge("final_code_output", "generate_answer")
         # Set the output
         workflow.set_finish_point("generate_answer")
 

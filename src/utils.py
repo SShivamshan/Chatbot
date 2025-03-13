@@ -452,6 +452,39 @@ class WebscrapperTool(BaseTool):
     def _arun(self):
         raise NotImplementedError("This tool does not support async")
 
+class CodeGeneratorTool(BaseTool):
+    name: str = "code_tool"
+    description: str = "Handles code-related tasks such as syntax highlighting, code analysis, and debugging."
+    llm: Optional[Chatbot] = Field(default=None, exclude=True)
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self,llm:Chatbot):
+        super().__init__()
+        self.llm = llm
+
+    def _run(self, query:str, steps:List[str]):
+        pass
+
+    def _arun(self):
+        raise NotImplementedError("This tool does not support async")
+
+class CodeReviewTool(BaseTool):
+    name: str = "code_review_tool"
+    description: str = "Analyzes and reviews code snippets for potential bugs, errors, and performance issues."
+    llm: Optional[Chatbot] = Field(default=None, exclude=True)
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, llm: Chatbot):
+        super().__init__()
+        self.llm = llm
+
+    def _run(self, query:str, steps:List[str]):
+        pass
+
+    def _arun(self):
+        raise NotImplementedError("This tool does not support async")
 
 class DateTimeTool(BaseTool):
     name: str = "date_time_tool"
