@@ -168,6 +168,7 @@ Prompt_templates:
         Query Variations:
 
         <|eot_id|>
+        <|end_of_text|>
 
         <|start_header_id|>assistant<|end_header_id|>
         
@@ -227,6 +228,7 @@ Agent_templates:
         **Query to analyze:** {query}
 
         <|eot_id|>
+        <|end_of_text|>
 
         <|start_header_id|>assistant<|end_header_id|>
 
@@ -299,6 +301,7 @@ Agent_templates:
         }}```
 
         <|eot_id|>
+        <|end_of_text|>
 
         <|start_header_id|>assistant<|end_header_id|>
 
@@ -365,6 +368,7 @@ Agent_templates:
         ```
 
         <|eot_id|>
+        <|end_of_text|>
 
         <|start_header_id|>assistant<|end_header_id|>
 
@@ -420,6 +424,7 @@ Agent_templates:
         Query Type: {query_type}  
 
         <|eot_id|>
+        <|end_of_text|>
 
         <|start_header_id|>assistant<|end_header_id|>
 
@@ -450,44 +455,73 @@ Agent_templates:
       name: Code_research_template
       template: |
         <|begin_of_text|>
-
         <|start_header_id|>system<|end_header_id|>
+        You are a specialized AI assistant tasked with analyzing code generation requirements and producing a detailed implementation plan. Your output will directly guide another AI system in writing production-quality code.
 
-        You are an AI assistant designed to assist another agent responsible for generating code for a given query.  
-        Your task is to provide a structured list of **steps** or **processes** that the agent should follow to produce correct code.  
+        ## PRIMARY OBJECTIVE
+        Create a comprehensive, step-by-step implementation plan for the given programming task that balances high-level architecture with concrete implementation details.
 
-        - The steps should give a **high-level overview** of the process.  
-        - However, where necessary, include a **few key low-level details** within two steps to ensure correctness.  
+        ## ANALYSIS PROCESS
+        1. First, analyze the query to identify:
+          - Core functionality requirements
+          - Technical constraints
+          - Potential complexity challenges
+          - Appropriate programming paradigms
 
-        **Each step must:**  
-        - Logically follow the previous one and contribute to the final implementation.  
-        - Maintain clarity and ensure the process is easy to follow.  
+        2. Then, structure your response as a sequential development roadmap that a developer could follow to implement the solution from scratch.
+
+        ## IMPLEMENTATION PLAN REQUIREMENTS
+        Your implementation steps MUST include:
+
+        - **Architecture Components**: Identify specific modules, classes, or functions needed
+        - **Data Structures**: Specify exact data structures with justification (e.g., "Use a priority queue for task scheduling to achieve O(log n) insertion")
+        - **Algorithms**: Name specific algorithms with complexity analysis (e.g., "Implement A* search algorithm with Manhattan distance heuristic")
+        - **Function Signatures**: Provide concrete function signatures with parameter types and return values
+        - **Error Handling**: Specify exception handling strategies for anticipated failure modes
+        - **Edge Cases**: Identify potential edge cases and their handling approach
+        - **Testing Strategy**: Outline unit/integration tests focusing on critical components
+        - **Performance Considerations**: Note time/space complexity tradeoffs and optimization opportunities
+        - **Language-Specific Practices**: Adhere to language-specific conventions (e.g., PEP 8 for Python)
 
         **Query to analyze:** {query}  
 
-        **Return ONLY a JSON object** following this schema:  
+        ## RESPONSE FORMAT
+        Return ONLY a JSON object with the following structure:
         ```json
         {{
-          "steps": ["Step 1 description", "Step 2 description", "Step 3 description", ...]
+          "steps": [
+            "Step 1 description with concrete implementation details",
+            "Step 2 description with concrete implementation details",
+            "..."
+          ]
         }}
         ```
 
         **Example Output Format:**  
-        - **For a query like** `"Implement a neural network for image classification"`  
+        - **For a query like: ** "Create a web scraper in Python that extracts product information from an e-commerce site and stores it in a database" 
+
         **Return:**
         ```json
         {{
           "steps": [
-            "Choose a deep learning framework (e.g., TensorFlow, PyTorch).",
-            "Load and preprocess the image dataset (resize images, normalize pixel values).",
-            "Define the neural network architecture (e.g., convolutional layers for feature extraction).",
-            "Compile the model, setting the optimizer (Adam, SGD) and loss function (cross-entropy).",
-            "Train the model using labeled data, monitoring accuracy and loss.",
-            "Evaluate and fine-tune the model to improve generalization.",
-            "Deploy the model for inference using a suitable API or cloud service."
-          ]
+              "Define the project structure: Create a modular architecture with main.py as entry point, scraper.py for web scraping logic, database.py for database operations, models.py for data models, and config.py for configuration. Follow Python package structure with __init__.py files.",
+              "Create a configuration system: Implement a Config class in config.py that loads environment variables from a .env file using python-dotenv with fallback default values. Include TARGET_URL, DB_CONNECTION_STRING, REQUEST_TIMEOUT, and USER_AGENT settings.",
+              "Design the data model: Create a Product class in models.py using SQLAlchemy's declarative base with fields: id (Integer, primary_key), name (String(255), not_null), price (Numeric(10,2)), description (Text), url (String(500)), image_url (String(500)), and created_at (DateTime, default=now).",
+              "Implement database connection: Create a Database class in database.py using SQLAlchemy's create_engine with connection pooling (pool_size=5, max_overflow=10). Include methods: connect(), create_tables(), session_factory(), and close().",
+              "Build the web scraper core: Implement a Scraper class in scraper.py with methods: __init__(config), fetch_page(url) with exponential backoff retry logic, parse_product_listings(html) to extract product URLs, and parse_product_details(html) to extract structured product data using CSS selectors.",
+              "Implement rate limiting and politeness: Add a RequestThrottler class that ensures requests are spaced by at least 1-2 seconds using time.sleep() and tracks request count to respect robots.txt limitations.",
+              "Add error handling: Implement try-except blocks for network errors (requests.exceptions.RequestException), parsing errors (bs4.FeatureNotFound), and database errors (sqlalchemy.exc.SQLAlchemyError). Log errors using Python's logging module at appropriate severity levels.",
+              "Create the main execution flow: In main.py, implement a script that initializes the config, sets up logging, connects to the database, creates tables if needed, initializes the scraper, fetches and processes product listings, then extracts and stores detailed product information.",
+              "Add command-line interface: Use argparse to create CLI options for start_url, max_products, and database_path, with sensible defaults and help text.",
+              "Implement data validation: Add a validate_product_data(product_dict) function that checks required fields are present and have expected types/formats before database insertion.",
+              "Add unit tests: Create tests/ directory with test modules for each component using pytest. Include mock responses for web requests and a test database fixture using SQLite in-memory database."
+            ]
         }}
         ```
+        <|eot_id|>
+        <|end_of_text|>
+
+        <|start_header_id|>assistant<|end_header_id|>
 
       input_variables:
         - name: query
@@ -496,7 +530,7 @@ Agent_templates:
 
       output_parser:
         type: "json"
-        schema:
+        schema: 
           type: "object"
           properties:
             steps:
@@ -506,3 +540,334 @@ Agent_templates:
               description: "A sequential list of steps to guide code generation, maintaining high-level clarity with some essential low-level details."
           required: ["steps"]
 
+    Code_generator_template:
+      name: Code_generator_template
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert code developer. Your task is to write high-quality, efficient, and well-documented code that follows language-specific best practices.
+
+        **Task:** {query}
+
+        **Implementation Steps:**
+        {steps_text}
+
+        **Technical Requirements:**
+        - Language: [Python/C++/JavaScript/other]
+        - Standards: [PEP8 for Python, Modern C++ guidelines, etc.]
+        - Maximum code quality and readability are required
+        - Use appropriate coding styles and conventions (e.g., snake_case for variable names, meaningful function/class names)
+
+        ## IMPLEMENTATION REQUIREMENTS
+        Follow these requirements meticulously:
+
+        1. **Step-by-Step Implementation**:
+          - Each numbered step in the implementation plan MUST be translated into corresponding code
+          - Track your progress through the steps by adding comments like `// Step 3: Parse input data` before implementing each step
+          - Verify each step's implementation before proceeding to the next
+
+        2. **Code Structure and Documentation**:
+          - Write clean, modular, maintainable code with appropriate abstractions
+          - Include comprehensive documentation:
+            * File/module header comments explaining purpose and usage
+            * Function/class docstrings in language-appropriate format
+            * Type annotations/signatures where applicable (required for Python, TypeScript)
+            * Inline comments ONLY for complex logic or non-obvious decisions
+
+        3. **Error Handling and Edge Cases**:
+          - Implement robust error handling appropriate to the language (try/catch, error returns, etc.)
+          - Add input validation for all public functions/methods
+          - Handle edge cases explicitly as mentioned in the implementation plan
+
+        4. **Performance and Optimization**:
+          - Implement the specified algorithms with their expected time/space complexity
+          - Include optimizations mentioned in the implementation plan
+          - Add brief comments explaining performance-critical sections
+
+        5. **Testing**:
+          - Implement unit tests that cover:
+            * Core functionality (happy path)
+            * Edge cases identified in the implementation plan
+            * Error handling paths
+          - Group tests logically by functionality
+
+        ## SELF-REVIEW CHECKLIST
+        Before submitting your code, verify that you have:
+        * Implemented ALL steps from the implementation plan
+        * Added step tracking comments to show implementation of each step
+        * Included appropriate documentation
+        * Implemented proper error handling and edge case management
+        * Added required unit tests
+        * Followed all language-specific conventions and best practices
+        * Optimized performance-critical sections as specified
+
+        ## EXAMPLES
+        ## Example 1 : Implementing a simple sorting algorithm
+        **Query:** Implement a bubble sort algorithm in Python.
+
+        **Implementation Steps:**
+        1. Initialize an array with given elements
+        2. Iterate through the array from the first element to the second-to-last element
+        3. Compare each pair of adjacent elements
+        4. Swap the elements if they are in the wrong order
+        5. Repeat steps 3-4 until the entire array is sorted
+
+        **Output Format:**
+        ```python
+        def bubble_sort(arr):
+            n = len(arr)
+            for i in range(n):
+                for j in range(0, n-i-1):
+                    if arr[j] > arr[j+1] :
+                        arr[j], arr[j+1] = arr[j+1], arr[j]
+            return arr
+        ```
+        ## Example 2 : Implementing a simple sorting algorithm in C++
+        **Query:** Implement a bubble sort algorithm in C++.
+
+        **Implementation Steps:**
+        1. Initialize an array with given elements
+        2. Iterate through the array from the first element to the second-to-last element
+        3. Compare each pair of adjacent elements
+        4. Swap the elements if they are in the wrong order
+        5. Repeat steps 3-4 until the entire array is sorted
+
+        **Output Format:**
+        ```cpp 
+        #include <iostream>  // Include necessary header for input/output
+
+        using namespace std;
+
+        /**
+        * @brief Performs Bubble Sort on an array.
+        * @param arr The array to be sorted.
+        * @param n The number of elements in the array.
+        */
+        void bubbleSort(int arr[], int n) {{
+            // Outer loop for passes
+            for (int i = 0; i < n - 1; i++) {{
+                // Inner loop for comparison and swapping
+                for (int j = 0; j < n - i - 1; j++) {{
+                    // Swap if the element is greater than the next one
+                    if (arr[j] > arr[j + 1]) {{
+                        int temp = arr[j];
+                        arr[j] = arr[j + 1];
+                        arr[j + 1] = temp;
+                    }}
+                }}
+            }}
+        }}
+
+        /**
+        * @brief Main function to demonstrate Bubble Sort.
+        */
+        int main() {{
+            int arr[] = {{64, 34, 25, 12, 22, 11, 90}};  // Sample array
+            int n = sizeof(arr) / sizeof(arr[0]);  // Calculate number of elements
+
+            // Sorting the array using Bubble Sort
+            bubbleSort(arr, n);
+
+            // Output the sorted array
+            cout << "Sorted array: ";
+            for (int i = 0; i < n; ++i) {{
+                cout << arr[i] << " ";
+            }}
+            cout << endl;  // Newline for better formatting
+
+            return 0;  // Indicate successful execution
+        }}
+        ``` 
+        <|eot_id|>
+        <|end_of_text|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: query
+          description: The task or code snippet to analyze.
+          is_required: true
+        - name: steps_text
+          description: A list of detailed implementation steps.
+          is_required: true
+      
+      # output_parser:
+      #   type: "json"
+      #   schema: {
+      #     type: "object",
+      #     "properties": {
+      #       "code": {
+      #         "type": "string",
+      #         "description": "The complete code implementation following all specified steps and requirements."
+      #       }
+      #     },
+      #     "required": ["code"]
+      #   }
+
+    Code_correction_template:
+      name: Code_correction_template
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert software developer. Your task is to correct the given code based on the given feedback. 
+
+        **Code to Correct:**
+        {code}
+        
+        **Feedback:**
+        {feedback}
+
+        Please provide:
+        1. The corrected code. 
+        2. An explanation of the changes made to fix the issues. Place these explanation as comments on the code that was corrected. 
+        3. Additional improvements beyond the feedback that could enhance:
+          - Performance
+          - Readability
+          - Maintainability
+          - Security (if applicable)
+          - Edge case handling
+
+        **Corrected Code:**
+        [Include the complete corrected code here]
+
+        **Explanation of Changes:**
+        [Explain how the corrections address the feedback]
+
+        **Additional Improvements:**
+        [Detail any other improvements made and why they're beneficial]
+
+        <|eot_id|>
+        <|end_of_text|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+        
+      input_variables:
+        - name: code
+          description: The code to be reviewed.
+          is_required: true
+        - name: feedback
+          description: The specific feedback provided by the code reviewer.
+          is_required: true
+
+    Code_review_tempalte:
+      name: Code_review_tempalte
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert software reviewer. Your task is to analyze the following Python or C++ code and provide a structured, detailed review based on:
+
+        - **Syntax or Logical Errors**: Identify any incorrect syntax, undefined variables, or faulty logic.
+        - **Performance Inefficiencies**: Detect unnecessary computations, redundant loops, or suboptimal data structures.
+        - **PEP8 Style (Python) / Standard C++ Compliance**: Highlight formatting, naming conventions, and style inconsistencies.
+        - **Security Vulnerabilities**: Look for unsafe practices, such as SQL injections, buffer overflows, and weak encryption.
+        - **Code Readability & Maintainability**: Assess clarity, use of comments, meaningful variable names, and modular design.
+        - **Edge Case Handling**: Ensure proper handling of boundary conditions, user inputs, and failure scenarios.
+        - **Modularity & Scalability**: Evaluate function/class design, reusability, and adaptability for future growth.
+
+        **Code to Review:**
+        ```
+        {code}
+        ```
+        
+        **Instructions:**
+        - Assign each feedback point a severity level (Critical, Major, Minor)
+        - Include specific line numbers when referencing code
+        - Return corrected code snippets only inside the `code_example` field in the JSON.
+        - Base your "is_valid" determination on whether the code can run without critical errors
+
+        Return **only** a JSON object in this format:
+        ```json
+        {{
+          "feedback": [
+              {{
+                "category": string,
+                "severity": Critical | Major | Minor,
+                "issue": string,
+                "recommendation": string,
+                "code_example": string
+              }}
+          ],
+          "is_valid": true/false
+        }}
+        ```
+        **Example Output:**
+        **Return:**
+        ```json
+        {{
+          "feedback": [
+              {{
+                "category": "Performance",
+                "severity": "Major",
+                "issue": "O(n²) nested loop at lines 24-30 is inefficient for large inputs",
+                "recommendation": "Consider using a hash map to reduce complexity to O(n)",
+                "code_example": "# Example of improved implementation\nresult = {{}}\nfor item in items:\n    result[item.id] = item.value"
+              }}
+          ],
+          "is_valid": true/false
+        }}
+        ```
+
+        
+        <|eot_id|>
+
+        <|end_of_text|>
+
+        <|start_header_id|>assistant<|end_header_id|>
+
+      input_variables:
+        - name: code
+          description: The Python or C++ code to be reviewed.
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "feedback": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "Performance",
+                      "Syntax or Logical Errors",
+                      "PEP8 Style (Python) / Standard C++ Compliance",
+                      "Security Vulnerabilities",
+                      "Code Readability & Maintainability",
+                      "Edge Case Handling",
+                      "Modularity & Scalability"
+                    ]
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["Critical", "Major", "Minor"]
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "recommendation": {
+                    "type": "string"
+                  },
+                  "code_example": {
+                    "type": "string"
+                  }
+                },
+                "required": ["category", "severity", "issue", "recommendation", "code_example"]
+              }
+            },
+            "is_valid": {
+              "type": "boolean"
+            }
+          },
+          "required": ["feedback", "is_valid"]
+        }
+          

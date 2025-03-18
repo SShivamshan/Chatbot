@@ -237,7 +237,7 @@ class Agent(BaseModel):
             logger.logger.info(f"Performing code research on: {state['query']}")
             result = self.code_research.invoke({"query": state["query"]})
             
-            updated_state = {**state, "code_research_results": result.get("steps", [])}
+            updated_state = {**state, "steps": result.get("steps", [])}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -359,9 +359,9 @@ class Agent(BaseModel):
             node_start_time = self.logger.log_node_entry(node_name, state)
 
             # Call the code generation tool
-            code_result = self.tools["code_generator"]._run(state["query"])
+            code_result = self.tools["code_generator"]._run(query=state["query"],steps=state.get("steps", []))
 
-            updated_state = {**state, "generated_code": code_result}
+            updated_state = {**state, "generated_code": format_code(code_result['code'])}
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -375,7 +375,9 @@ class Agent(BaseModel):
 
             # Call the critique tool (runs tests & linting)
             critique_result = self.tools["code_critique"]._run(state["generated_code"])
-
+            # Update the steps part
+            state["steps"] = critique_result["feedback"]
+            
             updated_state = {
                 **state,
                 "critique_feedback": critique_result["feedback"],

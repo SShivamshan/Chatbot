@@ -7,13 +7,14 @@ import json
 import pytz
 import hashlib
 import requests
+import textwrap
 from typing import List, Dict, Optional, Union
 from io import BytesIO
 import tempfile
 from typing import Any
 import subprocess
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Third-party library imports
 import yaml
@@ -29,7 +30,7 @@ from rich.panel import Panel
 from langchain.docstore.document import Document
 from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
-from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
+from langchain_core.output_parsers import StrOutputParser, BaseOutputParser,JsonOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain.tools import BaseTool, StructuredTool, tool
@@ -452,6 +453,10 @@ class WebscrapperTool(BaseTool):
     def _arun(self):
         raise NotImplementedError("This tool does not support async")
 
+
+def format_code(code: str, lang="python") -> str:
+    return f"```{lang}\n{textwrap.dedent(code)}\n```"
+
 class CodeGeneratorTool(BaseTool):
     name: str = "code_tool"
     description: str = "Handles code-related tasks such as syntax highlighting, code analysis, and debugging."
@@ -463,11 +468,82 @@ class CodeGeneratorTool(BaseTool):
         super().__init__()
         self.llm = llm
 
-    def _run(self, query:str, steps:List[str]):
-        pass
+    def _run(self, query: str, steps: List[str]) -> dict:
+        """
+        Uses an LLM to generate Python code based on the query and structured steps.
 
+        Args:
+            query (str): The programming task description.
+            steps (List[str]): A structured sequence of steps to implement the solution.
+
+        Returns:
+            str: The generated Python code.
+        """
+        steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(steps))
+        prompt = self._generate_prompt()
+        llm_chain = prompt | self.llm | StrOutputParser()
+        response = llm_chain.invoke({"query": query, "steps_text": steps_text})
+        return response
+
+    def _generate_prompt(self) -> PromptTemplate:
+        """
+        Formats the query and steps into a structured prompt for the LLM.
+
+        Returns:
+            str: A formatted prompt.
+        """
+        
+        try:
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"]["Code_generator_template"]
+            template = template_config["template"]
+            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
+            return PromptTemplate(
+                template=template,
+                input_variables=input_variables
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to initialize code research template: {str(e)}")
+    
     def _arun(self):
         raise NotImplementedError("This tool does not support async")
+
+class CodeCorrectorTool(BaseTool):
+    name: str = "code_corrector_tool"
+    description: str = "Corrects syntax errors, logical mistakes, and formatting issues in Python code."
+    llm: Optional[Chatbot] = Field(default=None, exclude=True)
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, llm: Chatbot):
+        super().__init__()
+        self.llm = llm
+
+    def _run(self,code,feedbacks:List[Dict]) -> str:
+        
+        steps_text = ""
+        for feedback in feedbacks:
+            if feedback.get("severity") == "Major":
+                # Properly format the issue and recommendation as steps
+                steps_text += f"\n- Issue: {feedback.get('issue')}\n  Recommendation: {feedback.get('recommendation')}\n"
+        prompt = self._generate_correction_prompt()
+        llm_chain = prompt | self.llm | StrOutputParser()
+        # Call the LLM
+        response = llm_chain.invoke({"code": code, "feedback": steps_text})
+        return response
+
+    def _generate_correction_prompt(self) -> PromptTemplate:
+        try:
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"]["Code_correction_template"]
+            template = template_config["template"]
+            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
+            return PromptTemplate(
+                template=template,
+                input_variables=input_variables
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to initialize code correction template: {str(e)}")
 
 class CodeReviewTool(BaseTool):
     name: str = "code_review_tool"
@@ -480,8 +556,47 @@ class CodeReviewTool(BaseTool):
         super().__init__()
         self.llm = llm
 
-    def _run(self, query:str, steps:List[str]):
-        pass
+    def _run(self, code: str) -> dict:
+        """
+        Analyzes the provided code and returns a structured critique.
+
+        Args:
+            code (str): The generated Python code to review.
+
+        Returns:
+            dict: A JSON response containing:
+                  - critique_feedback (list): Detailed areas of improvement.
+                  - is_code_valid (bool): Whether the code is production-ready.
+        """
+        # Generate the LLM prompt
+        prompt = self._generate_review_prompt()
+        llm_chain = prompt | self.llm | JsonOutputParser()
+        # Call the LLM
+        response = llm_chain.invoke({"code":code})
+        return response
+
+    def _generate_review_prompt(self) -> str:
+        """
+        Generates a structured prompt for code review.
+
+        Args:
+            code (str): The code snippet to be reviewed.
+
+        Returns:
+            str: A structured prompt for the LLM.
+        """
+        try:
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"]["Code_review_tempalte"]
+            template = template_config["template"]
+            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
+            return PromptTemplate(
+                template=template,
+                input_variables=input_variables
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to initialize code research template: {str(e)}")
+
 
     def _arun(self):
         raise NotImplementedError("This tool does not support async")
