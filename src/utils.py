@@ -454,8 +454,9 @@ class WebscrapperTool(BaseTool):
         raise NotImplementedError("This tool does not support async")
 
 
-def format_code(code: str, lang="python") -> str:
-    return f"```{lang}\n{textwrap.dedent(code)}\n```"
+def format_code(code: str) -> str:
+    # return f"```{lang}\n{textwrap.dedent(code)}\n```"
+    return f"\n{textwrap.dedent(code)}\n"
 
 class CodeGeneratorTool(BaseTool):
     name: str = "code_tool"
@@ -599,6 +600,54 @@ class CodeReviewTool(BaseTool):
 
 
     def _arun(self):
+        raise NotImplementedError("This tool does not support async")
+
+class CodeDiagramCreator(BaseTool):
+    name: str = "code_diagram_creator"
+    description: str = "Creates diagrams from code snippets."
+    llm: Optional[Chatbot] = Field(default=None, exclude=True)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, llm: Chatbot):
+        super().__init__()
+        self.llm = llm
+    
+    def _run(self, query: str) -> str:
+        """
+        Generates a diagram from a given code snippet.
+        It determines whether to create a class diagram or a flowchart.
+        """
+
+        # Step 1: Determine the type of diagram (class diagram or flowchart)
+        diagram_type_prompt = f"""
+        Analyze the following code and determine the best diagram type:
+        - If it contains classes and methods, return "classDiagram".
+        - If it has function calls, conditionals, or loops, return "flowchart".
+        Code:
+        {query}
+        Return only: "classDiagram" or "flowchart"
+        """
+
+        diagram_type = self.llm.invoke(diagram_type_prompt).content
+
+        # Step 2: Generate Mermaid.js diagram
+        generate_diagram_prompt = f"""
+        Convert the following code into a {diagram_type} in Mermaid.js format.
+        Output only valid Mermaid.js syntax.
+        Code:
+        {query}
+        """
+
+        mermaid_diagram = self.llm.invoke(generate_diagram_prompt).content
+
+        return mermaid_diagram
+
+    def _arun(self, query: str):
+        """
+        This tool does not support asynchronous execution.
+        """
         raise NotImplementedError("This tool does not support async")
 
 class DateTimeTool(BaseTool):

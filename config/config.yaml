@@ -206,7 +206,7 @@ Agent_templates:
         - If category includes **"web_scrape"** or **"element_search"**, `required_tools` **must only include** `["web_scrape"]`.
         - If category includes **"date_time"**, `required_tools` **must include** `["date_time"]`.
         - If category includes **"knowledge_base"**, `required_tools` **must include** `["knowledge"]`.
-        - If category includes **"code"**, `required_tools` **must include** `["code"]`.
+        - If category includes **"code"**, `required_tools` **must only include** `["code"]`.
         - If category includes **"multiple"**, `required_tools` **must be a combination of the tools based on the detected categories**.
 
         **Available Categories:**
@@ -453,6 +453,53 @@ Agent_templates:
 
     Code_research_template:
       name: Code_research_template
+      template: |
+        <|begin_of_text|>
+        <|start_header_id|>system<|end_header_id|>
+
+        You are a specialized AI assistant tasked with identifying whether the user's query requests code generation, correction, critique, or diagram generation. Analyze the query carefully to determine the user's intent.
+
+        Your task is to output a structured JSON response with the following fields:
+        - `"action_type"`: Must be one of `"generate"`, `"correct"`, `"critique"`, or `"diagram"`.
+
+        **Classification Rules:**
+        - If the user is requesting brand-new code or implementation, classify as `"generate"`.
+        - If the user is asking to fix, debug, or improve existing code, classify as `"correct"`.
+        - If the user is asking for feedback, critique, or analysis of code or its related diagrams, classify as `"critique"`.
+        - If the user is requesting a **diagram** (e.g., class diagram, flowchart, sequence diagram) based on provided code, classify as `"diagram"`.
+
+        <|start_header_id|>user<|end_header_id|>
+        {query}
+
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+            "action_type": "generate" | "correct" | "diagram" | "critique"
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+      
+      input_variables:
+        - name: query
+          description: The user's code-related query
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "action_type": {
+              "type": "string",
+              "enum": ["generate", "correct", "diagram", "critique"]
+            }
+          },
+          "required": ["action_type"]
+        }
+
+    Code_generation_list_template:
+      name: Code_generation_list_template
       template: |
         <|begin_of_text|>
         <|start_header_id|>system<|end_header_id|>
@@ -769,6 +816,8 @@ Agent_templates:
         - **Code Readability & Maintainability**: Assess clarity, use of comments, meaningful variable names, and modular design.
         - **Edge Case Handling**: Ensure proper handling of boundary conditions, user inputs, and failure scenarios.
         - **Modularity & Scalability**: Evaluate function/class design, reusability, and adaptability for future growth.
+
+        You should not return any corrected code or documentation. 
 
         **Code to Review:**
         ```

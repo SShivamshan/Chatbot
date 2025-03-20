@@ -2,7 +2,6 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#       Test it with Agent.
 #       Now we Need to find some improvements needed for datetime, so that when we go in we retrieve only the necessary data. 
 #       End with cases of multiple and knowledge base
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 

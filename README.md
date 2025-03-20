@@ -108,8 +108,6 @@ While poppler-utils can be installed via pip, we recommend using Conda for the o
 
     conda install conda-forge::tesseract
 
-
-
 For a complete list of dependencies, refer to the `requirements.txt` file.
 
 ## Configuration
@@ -155,4 +153,4 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 3. Perhaps add some javascript components. 
 4. Improvements linked to constrained environments. 
 5. Possibly adding docker support 
-6. Possibility of adding the configuration to interact with google applications. 
+6. Possibility of adding the configuration to interact with google applications especially for code like a sandbox application where we could run a test file.  

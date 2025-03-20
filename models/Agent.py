@@ -14,6 +14,7 @@ from src.AgentLogger import AgentLogger
 
 # SOLUTION adopted from : https://medium.com/@sahin.samia/how-to-build-a-interactive-personal-ai-research-agent-with-llama-3-2-b2a390eed63e 
 # https://langchain-ai.github.io/langgraph/tutorials/introduction/#part-1-build-a-basic-chatbot 
+# https://www.llama.com/docs/model-cards-and-prompt-formats/meta-llama-3/ 
 class GraphState(TypedDict):
     query: str
     category: Optional[List[str]]
@@ -27,8 +28,8 @@ class GraphState(TypedDict):
     elements_to_retrieve: Optional[List[str]]
     final_answer: Optional[str]
     final_json: Optional[Dict[str, Any]]
+    action_type: Optional[str]
     steps: Optional[List[str]]
-    final_code: Optional[str]
     generated_code: Optional[str]
     critique_feedback: Optional[str]
     is_code_valid: Optional[bool]
@@ -44,7 +45,8 @@ class Agent(BaseModel):
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     question_to_keywords: Optional[Any] = Field(default=None, exclude=True)
     query_web_scrape: Optional[Any] = Field(default=None, exclude=True)
-    code_research: Optional[Any] = Field(default=None, exclude=True)
+    code_query_identification: Optional[Any] = Field(default=None, exclude=True)
+    code_list: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
     
     def __init__(
@@ -78,39 +80,28 @@ class Agent(BaseModel):
         self.ai_template = load_ai_template('config/config.yaml')
         self.logger.logger.info("Tools and templates loaded")
         # Initialize agent chains
-        QUERY_IDENTIFICATION_PROMPT = self._query_identification_template()
+        QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name="Query_identification_template")
         self.question_routing = QUERY_IDENTIFICATION_PROMPT | self.llm | JsonOutputParser()
         
-        QUERY_WEB_PROMPT = self._query_web_template()
+        QUERY_WEB_PROMPT = self._create_template(template_name="Query_web_template")
         self.question_to_keywords = QUERY_WEB_PROMPT | self.llm | JsonOutputParser()
 
-        QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._query_web_scrape_template()
+        QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._create_template(template_name="Query_web_scrape_classification")
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
 
-        CODE_RESEARCH_PROMPT = self._code_research_template()
-        self.code_research = CODE_RESEARCH_PROMPT | self.llm | JsonOutputParser()
+        CODE_QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name = "Code_research_template")
+        self.code_query_identification = CODE_QUERY_IDENTIFICATION_PROMPT | self.llm | JsonOutputParser()
+
+        CODE_LIST_PROMPT = self._create_template(template_name="Code_generation_list_template")
+        self.code_list = CODE_LIST_PROMPT | self.llm | JsonOutputParser()
+
         self.logger.logger.info("Agent chains initialized")
-
-    def _query_identification_template(self):
-        try:
-            self.logger.logger.debug("Loading query identification template")
-            templates = load_ai_template(config_path="config/config.yaml")
-            template_config = templates["Agent_templates"]["Query_identification_template"]
-            template = template_config["template"]
-            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
-            return PromptTemplate(
-                template=template,
-                input_variables=input_variables
-            )
-        except Exception as e:
-            self.logger.log_error("_query_identification_template", e)
-            raise ValueError(f"Failed to initialize query identification: {str(e)}")
     
-    def _query_web_template(self):
+    def _create_template(self,template_name:str) -> PromptTemplate:
         try:
-            self.logger.logger.debug("Loading query web template")
+            self.logger.logger.debug("Loading template")
             templates = load_ai_template(config_path="config/config.yaml")
-            template_config = templates["Agent_templates"]["Query_web_template"]
+            template_config = templates["Agent_templates"][template_name]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
             return PromptTemplate(
@@ -118,38 +109,8 @@ class Agent(BaseModel):
                 input_variables=input_variables
             )
         except Exception as e:
-            self.logger.log_error("_query_web_template", e)
-            raise ValueError(f"Failed to initialize query web: {str(e)}")
-        
-    def _query_web_scrape_template(self):
-        try:
-            self.logger.logger.debug("Loading query web scrape template")
-            templates = load_ai_template(config_path="config/config.yaml")
-            template_config = templates["Agent_templates"]["Query_web_scrape_classification"]
-            template = template_config["template"]
-            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
-            return PromptTemplate(
-                template=template,
-                input_variables=input_variables
-            )
-        except Exception as e:
-            self.logger.log_error("_query_web_scrape_template", e)
-            raise ValueError(f"Failed to initialize web scrape query classification: {str(e)}")
-
-    def _code_research_template(self):
-        try:
-            self.logger.logger.debug("Loading code research template")
-            templates = load_ai_template(config_path="config/config.yaml")
-            template_config = templates["Agent_templates"]["Code_research_template"]
-            template = template_config["template"]
-            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
-            return PromptTemplate(
-                template=template,
-                input_variables=input_variables
-            )
-        except Exception as e:
-            self.logger.log_error("_code_research_template", e)
-            raise ValueError(f"Failed to initialize code research template: {str(e)}")
+            self.logger.log_error(f"_create_template({template_name})", e)
+            raise ValueError(f"Failed to initialize template: {template_name}")
     
     def initialize_tools(self):
         self.logger.logger.debug("Initializing tools")
@@ -158,16 +119,17 @@ class Agent(BaseModel):
         webscrapper_tool = WebscrapperTool(llm=self.llm)
         generate_code_tool = CodeGeneratorTool(llm=self.llm)
         code_review_tool = CodeReviewTool(llm=self.llm)
+        code_corrector_tool = CodeCorrectorTool(llm=self.llm)
 
         tools = {
             "web_search": custom_search_tool,
             "web_scrapper": webscrapper_tool,
             "code_generator": generate_code_tool,
-            "code_critique": code_review_tool
+            "code_critique": code_review_tool,
+            "code_corrector": code_corrector_tool 
         }
         return tools
     
-
     def format_scraper_content(self,content):
         """
         Formats content from the web scraper into a consistent text format.
@@ -235,9 +197,20 @@ class Agent(BaseModel):
             node_start_time = logger.log_node_entry(node_name, state)
             
             logger.logger.info(f"Performing code research on: {state['query']}")
-            result = self.code_research.invoke({"query": state["query"]})
+            result = self.code_list.invoke({"query": state["query"]})
             
             updated_state = {**state, "steps": result.get("steps", [])}
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+
+        def code_query_identification(state: GraphState) -> GraphState:
+            node_name = "code_query_identification"
+            node_start_time = logger.log_node_entry(node_name, state)
+            
+            logger.logger.info(f"Performing code query identification on: {state['query']}")
+            result = self.code_query_identification.invoke({"query": state["query"]})
+            
+            updated_state = {**state, "action_type": result.get("action_type", "")}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -361,7 +334,7 @@ class Agent(BaseModel):
             # Call the code generation tool
             code_result = self.tools["code_generator"]._run(query=state["query"],steps=state.get("steps", []))
 
-            updated_state = {**state, "generated_code": format_code(code_result['code'])}
+            updated_state = {**state, "generated_code": code_result}
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -387,16 +360,21 @@ class Agent(BaseModel):
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
         
-        def final_code_output(state: GraphState) -> GraphState:
-            node_name = "final_code_output"
+        def correct_code(state:GraphState) -> GraphState:
+            node_name = "correct_code"
             node_start_time = self.logger.log_node_entry(node_name, state)
 
-            final_code = state.get("generated_code", "No final code available.")
-            updated_state = {**state, "final_code": final_code}
+            if not state.get("generated_code"):
+                self.logger.logger.warning("No generated code to correct.")
+                return state  # Skip if no code
+
+            # Call the code correction tool (runs automated corrections)
+            corrected_code = self.tools["code_correction"]._run(state["generated_code"])
+            updated_state = {**state, "generated_code": corrected_code}
 
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
-
+        
         # 6. Generate final answer
         def generate_answer(state: GraphState) -> GraphState:
             # Extract scrape results content
@@ -413,24 +391,27 @@ class Agent(BaseModel):
             
             # Format search results if present
             search_content = json.dumps(state.get("search_results", []), indent=2)
-            final_code = json.dumps(state.get("final_code", []),indent= 2)
+            final_code = json.dumps(state.get("generated_code", []),indent= 2)
 
-            prompt = f"""
-            Query: {state["query"]}
+            if not final_code:
+                prompt = f"""
+                Query: {state["query"]}
 
-            {"Search Results: " + search_content if state.get("search_results") else ""}
+                {"Search Results: " + search_content if state.get("search_results") else ""}
 
-            {"Scraped Content: " + scrape_content if scrape_content else ""}
+                {"Scraped Content: " + scrape_content if scrape_content else ""}
 
-            {"Code:" + final_code if state.get("final_code") else ""}
+                {"Code:" + final_code if state.get("final_code") else ""}
 
-            Based on the information above, provide a comprehensive answer to the query.
-            Do not include any citations or source links in your answer - I will add those separately.
-            """
+                Based on the information above, provide a comprehensive answer to the query.
+                Do not include any citations or source links in your answer - I will add those separately.
+                """
 
-            logger.logger.debug("Generating final answer with LLM")
-            answer_content = self.llm.invoke(prompt)
-            # logger.logger.info(f"Generated answer of length: {len(answer_content.content)} characters")
+                logger.logger.debug("Generating final answer with LLM")
+                answer_content = self.llm.invoke(prompt)
+            elif final_code:
+                logger.logger.debug("Final Answer for code task")
+                answer_content = final_code
             
             updated_state = {**state, "final_answer": answer_content}
             logger.log_node_exit(node_name, updated_state, node_start_time)
@@ -446,7 +427,9 @@ class Agent(BaseModel):
         workflow.add_node("code_research", code_research)
         workflow.add_node("generate_code", generate_code)
         workflow.add_node("critique_code", critique_code)
-        workflow.add_node("final_code_output", final_code_output)
+        workflow.add_node("code_query_identification", code_query_identification)
+        # workflow.add_node("final_code_output", final_code_output)
+        workflow.add_node("correct_code", correct_code)
 
         # Define edges
         workflow.set_entry_point("identify_query")
@@ -460,7 +443,7 @@ class Agent(BaseModel):
             if "web_scrape" in required_tools:
                 next_nodes.append("classify_scrape_query")  # First classify the web scraping query
             if "code" in required_tools:
-                next_nodes.append("code_research")  # Code research needs code execution
+                next_nodes.append("code_query_identifcation")  # Code research needs code execution
 
             result = next_nodes or ["generate_answer"]
             logger.log_decision("identify_query", result)
@@ -473,11 +456,6 @@ class Agent(BaseModel):
                 result = ["generate_answer"]
             logger.log_decision("extract_keywords", result)
             return result
-
-        # def route_after_search(state: GraphState) -> List[str]:
-        #     result = ["generate_answer"]
-        #     logger.log_decision("web_search", result)
-        #     return result
             
         def route_after_scrape_classification(state: GraphState) -> List[str]:
             # logger.logger.info(f"Route after scrape classification : {state}")
@@ -487,37 +465,38 @@ class Agent(BaseModel):
                 result = ["web_scrape"]
             logger.log_decision("classify_scrape_query", result)
             return result
-                 
-        # def route_after_web_scraper(state: GraphState) -> List[str]:
-        #     result = ["generate_answer"]
-        #     # logger.log_decision("web_scrape", result)
-        #     return result
         
+        def route_code_query_identification(state: GraphState) -> List[str]:
+            action_type = state.get("action_type")
+            if action_type == "generate":
+                return ["generate_code"]
+            elif action_type == "correct":
+                return ["correct_code"]
+            elif action_type == "critique":
+                return ["critique_code"]
+            elif action_type == "diagram":
+                pass
+
         def route_code_loop(state: GraphState) -> List[str]:
             """Loop between generation and critique until the code is valid or iterations run out."""
-            if state.get("is_code_valid") or state.get("iterations_left", 3) <= 0:
-                return ["final_code_output"]
-            return ["generate_code"]
-        
-        # def route_final_code_output(state: GraphState) -> List[str]:
-        #     result = ["generate_answer"]
-        #     logger.log_decision("final_code_output", result)
-        #     return result
+            action_type = state.get("action_type")
+            if state.get("is_code_valid") or state.get("iterations_left", 3) <= 0 or action_type in ["critique","correct","diagram"] :
+                return ["generate_answer"]
+            return ["correct_code"]
         
         # Connect nodes
         workflow.add_conditional_edges("identify_query", route_after_identification)
         workflow.add_conditional_edges("extract_keywords", route_after_keywords)
-        # workflow.add_conditional_edges("web_search", route_after_search)
         workflow.add_conditional_edges("classify_scrape_query", route_after_scrape_classification)
-        # workflow.add_conditional_edges("web_scrape", route_after_web_scraper)
         workflow.add_conditional_edges("critique_code", route_code_loop)
-        # workflow.add_conditional_edges("final_code_output", route_final_code_output)
+        workflow.add_conditional_edges("code_query_identification", route_code_query_identification)
+
         workflow.add_edge("code_research","generate_code")
         workflow.add_edge("generate_code", "critique_code")
-        
+        workflow.add_edge("correct_code", "critique_code")
         workflow.add_edge("web_search", "generate_answer")
         workflow.add_edge("web_scrape", "generate_answer")
-        workflow.add_edge("final_code_output", "generate_answer")
+        # workflow.add_edge("final_code_output", "generate_answer")
         # Set the output
         workflow.set_finish_point("generate_answer")
 
@@ -543,6 +522,16 @@ class Agent(BaseModel):
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
+            # Store the results in a dictionary
+            final_result = {
+                "query": result.get("query"),
+                "generated_code": result.get("generated_code"),
+                "is_code_valid": result.get("is_code_valid"),
+                "iterations_left": result.get("iterations_left"),
+                "critique_feedback": result.get("critique_feedback"),
+                "final_answer": result.get("final_answer")
+            }
+
             self.logger.end_agent_run(result)
             return result.get("final_answer", "No answer generated.")
         except Exception as e:
@@ -551,6 +540,6 @@ class Agent(BaseModel):
             return f"Error running agent: {str(e)}"
 
 
-
+    
 
 

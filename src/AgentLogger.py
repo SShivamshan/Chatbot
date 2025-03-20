@@ -249,14 +249,24 @@ class AgentLogger:
             for node, time_taken in self.metrics["node_times"].items():
                 metrics_table.add_row(f"Node {node} time", f"{time_taken:.2f}s")
             
-            # Extract the answer for display
-            answer = final_result.get("final_answer", "No answer generated.").content
-            if len(answer) > 500:
-                answer = answer[:500] + "... [truncated]"
-            
+           # Extract the answer for display
+            answer = final_result.get("final_answer", "No answer generated.")
+            if answer == "No answer generated.":
+                display_answer = answer
+            elif isinstance(answer, str):
+                # If it's already a string, use it directly
+                display_answer = answer
+            else:
+                # If it's an AI message object, extract the content
+                display_answer = answer.content
+
+            # Truncate if too long
+            if len(display_answer) > 500:
+                display_answer = display_answer[:500] + "... [truncated]"
+
             self.console.print(Panel(
                 f"[bold red]Agent run completed[/bold red]\n\n"
-                f"[yellow]Final Answer:[/yellow]\n{answer}",
+                f"[yellow]Final Answer:[/yellow]\n{display_answer}",
                 title="Run Completed",
                 border_style="red"
             ))
