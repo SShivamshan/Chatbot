@@ -31,6 +31,7 @@ class GraphState(TypedDict):
     action_type: Optional[str]
     steps: Optional[List[str]]
     generated_code: Optional[str]
+    diagram_image: Optional[str]
     critique_feedback: Optional[str]
     is_code_valid: Optional[bool]
     iterations_left: Optional[int]
@@ -120,13 +121,15 @@ class Agent(BaseModel):
         generate_code_tool = CodeGeneratorTool(llm=self.llm)
         code_review_tool = CodeReviewTool(llm=self.llm)
         code_corrector_tool = CodeCorrectorTool(llm=self.llm)
+        diagram_creator_tool = CodeDiagramCreator(llm=self.llm)
 
         tools = {
             "web_search": custom_search_tool,
             "web_scrapper": webscrapper_tool,
             "code_generator": generate_code_tool,
             "code_critique": code_review_tool,
-            "code_corrector": code_corrector_tool 
+            "code_corrector": code_corrector_tool,
+            "diagram_creator": diagram_creator_tool
         }
         return tools
     
@@ -209,7 +212,7 @@ class Agent(BaseModel):
             
             logger.logger.info(f"Performing code query identification on: {state['query']}")
             result = self.code_query_identification.invoke({"query": state["query"]})
-            
+            print(result)
             updated_state = {**state, "action_type": result.get("action_type", "")}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
@@ -286,7 +289,6 @@ class Agent(BaseModel):
             updated_state = {**state, "search_results": search_results}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
-
 
         # 5. Web scraper handler
         def run_web_scraper(state: GraphState) -> GraphState:
@@ -369,8 +371,23 @@ class Agent(BaseModel):
                 return state  # Skip if no code
 
             # Call the code correction tool (runs automated corrections)
-            corrected_code = self.tools["code_correction"]._run(state["generated_code"])
+            corrected_code = self.tools["code_corrector"]._run(state["generated_code"],state["steps"])
             updated_state = {**state, "generated_code": corrected_code}
+
+            self.logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+        
+        def create_diagram(state:GraphState) -> GraphState:
+            node_name = "create_diagram"
+            node_start_time = self.logger.log_node_entry(node_name, state)
+
+            if not state.get("generated_code"):
+                self.logger.logger.warning("No generated code to create a diagram.")
+                return state  # Skip if no code
+
+            # Call the diagram creation tool (runs diagram generation)
+            diagram_result = self.tools["diagram_creator"]._run(state["query"])
+            updated_state = {**state, "diagram_image": diagram_result["mermaid"]}
 
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
@@ -417,6 +434,16 @@ class Agent(BaseModel):
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
         
+        def prepare_code_for_critique(state: GraphState) -> GraphState:
+            """Updates the state to move the provided code (query) into generated_code."""
+            node_name = "prepare_code_for_critique"
+            node_start_time = self.logger.log_node_entry(node_name, state)
+
+            updated_state = {**state, "generated_code": state["query"]} 
+
+            self.logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
+
         # Add nodes
         workflow.add_node("identify_query", identify_query)
         workflow.add_node("extract_keywords", extract_keywords)
@@ -428,8 +455,9 @@ class Agent(BaseModel):
         workflow.add_node("generate_code", generate_code)
         workflow.add_node("critique_code", critique_code)
         workflow.add_node("code_query_identification", code_query_identification)
-        # workflow.add_node("final_code_output", final_code_output)
+        workflow.add_node("prepare_code_for_critique", prepare_code_for_critique)
         workflow.add_node("correct_code", correct_code)
+        workflow.add_node("create_diagram", create_diagram)
 
         # Define edges
         workflow.set_entry_point("identify_query")
@@ -443,7 +471,7 @@ class Agent(BaseModel):
             if "web_scrape" in required_tools:
                 next_nodes.append("classify_scrape_query")  # First classify the web scraping query
             if "code" in required_tools:
-                next_nodes.append("code_query_identifcation")  # Code research needs code execution
+                next_nodes.append("code_query_identification")  # Code research needs code execution
 
             result = next_nodes or ["generate_answer"]
             logger.log_decision("identify_query", result)
@@ -468,19 +496,18 @@ class Agent(BaseModel):
         
         def route_code_query_identification(state: GraphState) -> List[str]:
             action_type = state.get("action_type")
+
             if action_type == "generate":
                 return ["generate_code"]
-            elif action_type == "correct":
-                return ["correct_code"]
-            elif action_type == "critique":
-                return ["critique_code"]
+            elif action_type in ["correct", "critique"]: # TO correct the code we first fo through the review process so that it could allow us to correct it based on these feedbacks
+                return ["prepare_code_for_critique"]
             elif action_type == "diagram":
-                pass
+                return ["create_diagram"]
 
         def route_code_loop(state: GraphState) -> List[str]:
             """Loop between generation and critique until the code is valid or iterations run out."""
             action_type = state.get("action_type")
-            if state.get("is_code_valid") or state.get("iterations_left", 3) <= 0 or action_type in ["critique","correct","diagram"] :
+            if state.get("is_code_valid") or state.get("iterations_left", 3) <= 0 or action_type in ["diagram"] :
                 return ["generate_answer"]
             return ["correct_code"]
         
@@ -490,12 +517,14 @@ class Agent(BaseModel):
         workflow.add_conditional_edges("classify_scrape_query", route_after_scrape_classification)
         workflow.add_conditional_edges("critique_code", route_code_loop)
         workflow.add_conditional_edges("code_query_identification", route_code_query_identification)
-
+        
+        # Add edges
         workflow.add_edge("code_research","generate_code")
         workflow.add_edge("generate_code", "critique_code")
         workflow.add_edge("correct_code", "critique_code")
         workflow.add_edge("web_search", "generate_answer")
         workflow.add_edge("web_scrape", "generate_answer")
+        workflow.add_edge("prepare_code_for_critique", "critique_code")
         # workflow.add_edge("final_code_output", "generate_answer")
         # Set the output
         workflow.set_finish_point("generate_answer")

@@ -192,6 +192,7 @@ class CustomRetriever(BaseRetriever, BaseModel):
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         return self._get_relevant_documents(query)
 
+#================================================================ Web srapping/search tools =================================================================# 
 class CustomSearchTool(BaseTool):
     name: str = "web_search"
     description: str = "Useful for when you need to answer questions about current or new information through the web."
@@ -454,6 +455,7 @@ class WebscrapperTool(BaseTool):
         raise NotImplementedError("This tool does not support async")
 
 
+#================================================================ Code Tools ================================================================#
 def format_code(code: str) -> str:
     # return f"```{lang}\n{textwrap.dedent(code)}\n```"
     return f"\n{textwrap.dedent(code)}\n"
@@ -576,7 +578,7 @@ class CodeReviewTool(BaseTool):
         response = llm_chain.invoke({"code":code})
         return response
 
-    def _generate_review_prompt(self) -> str:
+    def _generate_review_prompt(self) -> PromptTemplate:
         """
         Generates a structured prompt for code review.
 
@@ -614,35 +616,39 @@ class CodeDiagramCreator(BaseTool):
         super().__init__()
         self.llm = llm
     
-    def _run(self, query: str) -> str:
+    def _run(self, query: str) -> PromptTemplate:
         """
         Generates a diagram from a given code snippet.
-        It determines whether to create a class diagram or a flowchart.
         """
 
-        # Step 1: Determine the type of diagram (class diagram or flowchart)
-        diagram_type_prompt = f"""
-        Analyze the following code and determine the best diagram type:
-        - If it contains classes and methods, return "classDiagram".
-        - If it has function calls, conditionals, or loops, return "flowchart".
-        Code:
-        {query}
-        Return only: "classDiagram" or "flowchart"
+        prompt = self._generate_review_prompt()
+        llm_chain = prompt | self.llm | JsonOutputParser()
+
+        response = llm_chain.invoke({"query": query})
+        return response
+        
+    def _generate_review_prompt(self) -> PromptTemplate:
         """
+        Generates a structured prompt for code review.
 
-        diagram_type = self.llm.invoke(diagram_type_prompt).content
+        Args:
+            code (str): The code snippet to be reviewed.
 
-        # Step 2: Generate Mermaid.js diagram
-        generate_diagram_prompt = f"""
-        Convert the following code into a {diagram_type} in Mermaid.js format.
-        Output only valid Mermaid.js syntax.
-        Code:
-        {query}
+        Returns:
+            str: A structured prompt for the LLM.
         """
-
-        mermaid_diagram = self.llm.invoke(generate_diagram_prompt).content
-
-        return mermaid_diagram
+        try:
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"]["Code_diagram_template"]
+            template = template_config["template"]
+            input_variables = [var["name"] for var in template_config.get("input_variables", [])]
+            return PromptTemplate(
+                template=template,
+                input_variables=input_variables
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to initialize code research template: {str(e)}")
+    
 
     def _arun(self, query: str):
         """
@@ -650,6 +656,7 @@ class CodeDiagramCreator(BaseTool):
         """
         raise NotImplementedError("This tool does not support async")
 
+#================================================================ Date Time Tools ================================================================#
 class DateTimeTool(BaseTool):
     name: str = "date_time_tool"
     description: str = "Handles time-related queries including current time lookup, event schedules, and conversions."
@@ -709,12 +716,23 @@ class DateTimeTool(BaseTool):
             response = requests.get(url, timeout=5)
             response.raise_for_status()  # Raise error for bad responses (4xx, 5xx)
             soup = BeautifulSoup(response.text, "html.parser")
+            # Try finding the main content section
+            main_content = (
+                soup.find("main") or
+                soup.find("article") or
+                soup.find("div", {"class": "content"}) or
+                soup.find("div", {"id": "content"}) or
+                soup.body  # Fallback to entire body if no clear main section is found
+            )
+
+            if not main_content:
+                return "Main content not found."
 
             # Extract time-related text (Look for "7 PM", "18:00", etc.)
             time_keywords = ["AM", "PM", "a.m.", "p.m.", "hour", "time", "schedule"]
             time_info = []
 
-            for tag in soup.find_all(["p", "span", "div"]):  # Scan paragraph and span elements
+            for tag in main_content.find_all(["p", "span", "div"]):  # Scan relevant elements
                 text = tag.get_text().strip()
                 if any(keyword in text for keyword in time_keywords):
                     time_info.append(text)

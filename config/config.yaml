@@ -506,7 +506,7 @@ Agent_templates:
         You are a specialized AI assistant tasked with analyzing code generation requirements and producing a detailed implementation plan. Your output will directly guide another AI system in writing production-quality code.
 
         ## PRIMARY OBJECTIVE
-        Create a comprehensive, step-by-step implementation plan for the given programming task that balances high-level architecture with concrete implementation details.
+        Create a comprehensive, step-by-step implementation plan for the given programming task that balances high-level architecture with concrete implementation details of low-level details.
 
         ## ANALYSIS PROCESS
         1. First, analyze the query to identify:
@@ -596,11 +596,6 @@ Agent_templates:
 
         You are an expert code developer. Your task is to write high-quality, efficient, and well-documented code that follows language-specific best practices.
 
-        **Task:** {query}
-
-        **Implementation Steps:**
-        {steps_text}
-
         **Technical Requirements:**
         - Language: [Python/C++/JavaScript/other]
         - Standards: [PEP8 for Python, Modern C++ guidelines, etc.]
@@ -649,6 +644,12 @@ Agent_templates:
         * Added required unit tests
         * Followed all language-specific conventions and best practices
         * Optimized performance-critical sections as specified
+
+        <|start_header_id|>user<|end_header_id|>
+        **Task:** {query}
+
+        **Implementation Steps:**
+        {steps_text}
 
         ## EXAMPLES
         ## Example 1 : Implementing a simple sorting algorithm
@@ -762,6 +763,7 @@ Agent_templates:
 
         You are an expert software developer. Your task is to correct the given code based on the given feedback. 
 
+        <start_header_id|>user<|end_header_id|>
         **Code to Correct:**
         {code}
         
@@ -818,7 +820,7 @@ Agent_templates:
         - **Modularity & Scalability**: Evaluate function/class design, reusability, and adaptability for future growth.
 
         You should not return any corrected code or documentation. 
-
+        <|start_header_id|>user<|end_header_id|>
         **Code to Review:**
         ```
         {code}
@@ -920,3 +922,65 @@ Agent_templates:
           "required": ["feedback", "is_valid"]
         }
           
+    Code_diagram_template:
+      name: Code_diagram_template
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert software developer. Your task is to create a diagram or flowchart to visualize the given code structure. The diagram should show the relationships between different components, functions, and classes, as
+        well as any potential dependencies or interactions. If the user asks for a specific diagram such as class diagram, flowchart, **ONLY** create the asked diagram. The diagram should be written in the Mermaid format.
+
+        You must output valid JSON with a single 'mermaid' field containing the diagram.
+
+        **Example Output:**
+        **Example 1 :**
+        ```json
+        {{
+          "mermaid": "graph LR\n A[Component A] --> B[Component B]\n B --> C[Component C]\n C --> D[Component D]"
+        }}
+        ``` 
+
+        **Example 2 :**
+        ```json
+        {{
+          "mermaid": "classDiagram\n Animal <|-- Duck\n Animal <|-- Fish\n Animal <|-- Zebra\n Animal : +int age\n class Duck{{\n +String beakColor\n +swim()\n +quack()\n }}\n class Fish{{\n -int sizeInFeet\n -canEat()\n }}\n class Zebra{{\n +bool is_wild\n +run()\n }}"
+        }}
+        ```
+
+        **Instructions:**
+        - Your diagram should be based on the given code structure.
+        - Use the provided template examples to create the diagram.
+        - Ensure proper JSON formatting. Do not include Markdown or code block syntax. 
+
+        <|start_header_id|>user<|end_header_id|>
+        {query}
+        
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+        "mermaid": "{{formatted_diagram}}"
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+
+      input_variables:
+        - name: query
+          description: The code structure to be visualized.
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "mermaid": {
+              "type": "string"
+            }
+          },
+          "required": ["mermaid"]
+        }
+
+    

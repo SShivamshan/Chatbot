@@ -137,6 +137,11 @@ Solution: Install PyTorch with one version lower than your current NVIDIA CUDA v
 
 Example: If you have CUDA 12.2, install PyTorch for CUDA 12.1
 
+### DuckDuckGo search
+It's preferable to install this version of duckduckgo_search==6.3.5, if the latest version lauches the following error : `duckduckgo_search.exceptions.RatelimitException: https://duckduckgo.com/ 202 Ratelimit` 
+
+Thus run the following command to install duckduckgo : ``pip3 install -U duckduckgo_search==6.3.5``
+Solution found : https://github.com/open-webui/open-webui/discussions/6624 
 
 ### NLTK Tokenizers
 The application requires specific NLTK tokenizers for text processing. We've included a function that automatically checks for and installs required tokenizers if they're missing.
