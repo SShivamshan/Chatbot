@@ -656,124 +656,23 @@ class CodeDiagramCreator(BaseTool):
         """
         raise NotImplementedError("This tool does not support async")
 
-#================================================================ Date Time Tools ================================================================#
-class DateTimeTool(BaseTool):
-    name: str = "date_time_tool"
-    description: str = "Handles time-related queries including current time lookup, event schedules, and conversions."
-    web_search_tool: Optional[DuckDuckGoSearchResults] = None  
-    llm:Optional[Chatbot] = Field(default=None, exclude=True)
+#================================================================ PDF Tools ================================================================#
+
+class PDFTools(BaseTool):
+    name: str = "pdf_tools"
+    description: str = "Performs various operations on PDF files such as reading and retrieving pdf contents."
+    llm: Optional[Chatbot] = Field(default=None, exclude=True)
+
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self,llm:Chatbot):
+    def __init__(self, llm: Chatbot):
         super().__init__()
         self.llm = llm
-        wrapper = DuckDuckGoSearchAPIWrapper(max_results=5, backend="api")  
-        self.web_search_tool = DuckDuckGoSearchResults(api_wrapper=wrapper, output_format="list")
 
-    def _run(self, query: str, category: str):
-        """
-        Determines which function to use based on category.
-        """
-        if category == "search_required":
-            return self.search_required(query)
-        elif category == "event_schedule":
-            return self.event_schedule(query)
-        elif category == "conversion":
-            return self.conversion(query)
-        else:
-            return "Invalid category."
+    
 
-    def search_required(self, query: str):
-        """
-        Searches the web for real-time information about time-related events.
-        Extracts time-related details from top search results.
-        """
-        search_results = self.web_search_tool.invoke(query)  # Search the web
-        # return search_results
-        extracted_info = []
 
-        for result in search_results:
-            url = result.get("link")
-            if url:
-                time_info = self.extract_time_from_url(url)  # Extract time-related details
-                if time_info:
-                    extracted_info.append({"title": result.get("title"), "url": url, "time_info": time_info})
-
-        return extracted_info if extracted_info else "No relevant time information found."
-
-    def event_schedule(self, query: str):
-        """
-        Searches the web for event schedules and extracts time information.
-        """
-        return self.search_required(query)  # Since both need time-related info, reuse search_required.
-
-    def extract_time_from_url(self, url: str) -> str:
-        """
-        Fetches a webpage and extracts time-related information.
-        """
-        try:
-            response = requests.get(url, timeout=5)
-            response.raise_for_status()  # Raise error for bad responses (4xx, 5xx)
-            soup = BeautifulSoup(response.text, "html.parser")
-            # Try finding the main content section
-            main_content = (
-                soup.find("main") or
-                soup.find("article") or
-                soup.find("div", {"class": "content"}) or
-                soup.find("div", {"id": "content"}) or
-                soup.body  # Fallback to entire body if no clear main section is found
-            )
-
-            if not main_content:
-                return "Main content not found."
-
-            # Extract time-related text (Look for "7 PM", "18:00", etc.)
-            time_keywords = ["AM", "PM", "a.m.", "p.m.", "hour", "time", "schedule"]
-            time_info = []
-
-            for tag in main_content.find_all(["p", "span", "div"]):  # Scan relevant elements
-                text = tag.get_text().strip()
-                if any(keyword in text for keyword in time_keywords):
-                    time_info.append(text)
-
-            return time_info[:5] if time_info else "No clear time info found."
-
-        except requests.RequestException as e:
-            return f"Error accessing {url}: {str(e)}"
-
-    def conversion(self, query: str):
-        """
-        Uses LLM to handle time zone conversions and date calculations.
-        """
-        # Provide current time context for the LLM
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        prompt = f"""
-        Current system time: {current_time}
-        
-        I need help with this time or date conversion query: "{query}"
-        
-        If this involves time zone conversion:
-        - Extract the time, source timezone, and target timezone
-        - Convert and return only the result in format: "[Time] in [Source TZ] is [Converted Time] in [Target TZ]"
-        
-        If this involves calculating days between dates:
-        - Extract both dates
-        - Calculate the number of days between them
-        - Return only the result in format: "There are [X] days between [Date1] and [Date2]"
-        
-        If this involves calculating a relative date:
-        - Determine if it's in the past or future
-        - Calculate the target date
-        - Return only the result in format: "The date [X] [units] [from now/ago] is [Calculated Date]"
-        
-        Return ONLY the final answer without explanations.
-        """
-        
-        response = self.llm(prompt)
-        return response
-        
 def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     """
     Parses the input text to retrieve all flags and their corresponding queries.

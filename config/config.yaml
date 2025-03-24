@@ -193,44 +193,46 @@ Agent_templates:
         2. Identify the most appropriate action category.
         3. Provide confidence level and reasoning.
         4. Provide the correct type of tool for each action category.
-        5. You must always return valid JSON only with the following schema and nothing else:
-        {{
-          "category": string[], // Must be from ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple", "element_search"]
-          "confidence": number, // Must be between 0.0 and 1.0
-          "reasoning": string,
-          "required_tools": string[] // Must be from ["web_search", "web_scrape", "knowledge", "date_time", "code"]
-        }}
+        5. You must always return valid JSON only with the following schema and nothing else
+        6. Sometimes more than one action category is possible. 
 
         **Category and Required Tools Mapping Rules:**
         - If category includes **"web_search"**, `required_tools` **must include** `["web_search"]`.
         - If category includes **"web_scrape"** or **"element_search"**, `required_tools` **must only include** `["web_scrape"]`.
-        - If category includes **"date_time"**, `required_tools` **must include** `["date_time"]`.
         - If category includes **"knowledge_base"**, `required_tools` **must include** `["knowledge"]`.
         - If category includes **"code"**, `required_tools` **must only include** `["code"]`.
-        - If category includes **"multiple"**, `required_tools` **must be a combination of the tools based on the detected categories**.
+        - If category includes **"pdf"**, `required_tools` **must include** `["pdf"]`.
 
         **Available Categories:**
         - **web_search**: Queries requiring real-time or external information (e.g., "Latest news on AI research").
         - **web_scrape**: Queries needing specific data extraction from the given website link (e.g., "Scrape weather data from weather.com").
         - **element_search**: Queries requiring specific data extraction from specific elements within a given website (e.g., "What is the section Blackholes about on this website?").
         - **knowledge_base**: Queries answerable using internal knowledge or present within the vectordb (e.g., "Who discovered gravity?").
-        - **date_time**: Queries requiring date and time information (e.g., "What time is it in Arizona right now?", "Convert 5 PM EST to UTC").
         - **code**: Queries requiring executing specific code snippets (e.g., "Write a Python function for Fibonacci sequence").
-        - **multiple**: Queries requiring a combination of the above approaches.
+        - **pdf**: Allows to read and understand PDF documents and it's contents.(e.g., "What is talked in this pdf /home/llm/Neural_Networks.pdf")
 
         **Available Tools:**  
         - **web_search**: Searches for information using various search engines for a given query.  
         - **web_scrape**: Scrapes the given website for data or information.  
         - **knowledge**: Answers questions using internal knowledge.  
-        - **date_time**: Converts dates and times into a standardized format.  
         - **code**: Provides programming-related responses.
+        - **pdf**: Allows to read and understand PDF documents and it's contents.
 
+        <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
+
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+          "category": string[], // Must be from ["web_search", "web_scrape", "knowledge_base", "element_search", "pdf"]
+          "confidence": number, // Must be between 0.0 and 1.0
+          "reasoning": string,
+          "required_tools": string[] // Must be from ["web_search", "web_scrape", "knowledge", "code","pdf"]
+        }}
+        ``` 
 
         <|eot_id|>
         <|end_of_text|>
-
-        <|start_header_id|>assistant<|end_header_id|>
 
       input_variables:
         - name: query
@@ -246,7 +248,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "date_time", "knowledge_base", "multiple", "element_search"]
+                "enum": ["web_search", "web_scrape", "knowledge_base", "element_search","pdf"]
               }
             },
             "confidence": {
@@ -261,7 +263,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "date_time", "knowledge", "code"]
+                "enum": ["web_search", "web_scrape", "knowledge", "code","pdf"]
               }
             }
           },
@@ -329,68 +331,6 @@ Agent_templates:
               }
             }
           }
-        }
-
-    Query_date_time_classification:
-      name: "Query Date and Time"
-      template: |
-        <|begin_of_text|>
-        
-        <|start_header_id|>system<|end_header_id|>
-
-        You are an expert in classifying date and time queries from users.
-        Given a user query, your job is to categorize it into one of the following types:
-
-        **Categories**:
-          - **search_required**: The user is asking about time or date information that requires looking up current data or specific event details. This includes:
-            - Current time requests (e.g., "What time is it in Tokyo?")
-            - Future time calculations based on current time (e.g., "What time will it be in 6 hours?")
-            - Event-specific times that require contextual information (e.g., "When is the next solar eclipse?")
-            
-          - **event_schedule**: The user is asking about scheduled events or operating hours that would require specific organizational or event information. This includes:
-            - Event start/end times (e.g., "When does the conference start?")
-            - Operating hours (e.g., "What are the office hours?", "When does the museum open?")
-            - Scheduled appointments (e.g., "What time is my doctor's appointment?")
-            
-          - **conversion**: The user is asking for a simple time/date conversion that can be calculated without external data. This includes:
-            - Time zone conversions (e.g., "Convert 3 PM EST to PST")
-            - Date format conversions (e.g., "What's 2023-05-10 in DD/MM/YYYY format?")
-            - Time arithmetic not dependent on current time (e.g., "How many days between January 1 and March 15?")
-
-        **Query:** {query}
-
-        **Output JSON Format:**
-        ```json
-        {{
-        "category": "search_required" | "event_schedule" | "conversion",
-        "reasoning": "Brief explanation of why this category was chosen"
-        }}
-        ```
-
-        <|eot_id|>
-        <|end_of_text|>
-
-        <|start_header_id|>assistant<|end_header_id|>
-
-      input_variables:
-        - name: query
-          description: "The user's query."
-          is_required: true
-      
-      output_parser:
-        type: "json"
-        schema: {
-          "type": "object",
-          "properties": {
-            "category": {
-              "type": "string",
-              "enum": ["search_required", "event_schedule", "conversion"]
-            },
-            "reasoning": {
-              "type": "string"
-            }
-          },
-          "required": ["category", "reasoning"]
         }
 
     Query_web_template:

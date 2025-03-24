@@ -2,7 +2,8 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#       Now we Need to find some improvements needed for datetime, so that when we go in we retrieve only the necessary data. 
+#       TEST WEBscrape tool with another online link
+#       Add the pdf file use case with one either a link towards the read pdf or towards the an online pdf 
 #       End with cases of multiple and knowledge base
 #       when testing within the app need to look into the code aspect for input
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 
