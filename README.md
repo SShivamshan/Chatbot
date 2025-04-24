@@ -15,7 +15,7 @@
 
 ## Introduction
 
-This project implements a chatbot application using Large Language Models (LLM). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes features for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval. FInally plans are in place to create a Machine learning chat bot type sessions that allows users to interact with their machine learning use cases and understand them better. Currently, there are three forms of application, a simple chat bot, a RAG module and finally an AGENT capable of interacting with PDF and research more relevant information on the web. Currently a Work in Progress.
+This project implements a chatbot application using Large Language Models (LLM). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes features for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval. FInally plans are in place to create a Machine learning chat bot type sessions that allows users to interact with their machine learning use cases and understand them better. Currently, there are three forms of application, a simple chat bot, a RAG module and finally an AGENT capable of interacting with PDF and research more relevant information on the web. Currently a Work in Progress especially the Agent part. 
 
 ## Project Structure
 The chatbot will start, and you can begin interacting with it through the command line interface.
