@@ -2,12 +2,13 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#       TEST WEBscrape tool with another online link
-#       Add the pdf file use case with one either a link towards the read pdf or towards the an online pdf 
-#       End with cases of multiple and knowledge base
+# Do the webagent search with travily and remove duckduckgo
+# THen the meta agent and then codeagent and finally pdf agent:Add the pdf file use case with one either a link towards the read pdf or towards the an online pdf 
+# Test entier process altogether
+# Add The llm handler to the app and test 
+
 #       when testing within the app need to look into the code aspect for input
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU. 
-#       Finish settings and config.toml -> do it every friday
 #       Finish documentation 
 #       Create a script for the ollama server
 #       Create a method to ensure security for the app.db

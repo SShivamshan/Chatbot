@@ -15,6 +15,7 @@ from typing import Any
 import subprocess
 from collections import defaultdict
 from datetime import datetime
+from collections import Counter
 
 # Third-party library imports
 import yaml
@@ -22,9 +23,10 @@ from PIL import Image
 import chromadb
 from pydantic import Field, BaseModel
 from PyPDF2 import PdfReader
-from bs4 import BeautifulSoup, ProcessingInstruction
+from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.panel import Panel
+from sklearn.metrics.pairwise import cosine_similarity
 
 # LangChain imports
 from langchain.docstore.document import Document
@@ -33,7 +35,7 @@ from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser,JsonOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
-from langchain.tools import BaseTool, StructuredTool, tool
+from langchain.tools import BaseTool, tool
 from langchain_chroma import Chroma
 from langchain.schema import BaseRetriever,HumanMessage
 from langchain_community.tools import DuckDuckGoSearchResults
@@ -42,7 +44,7 @@ from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 # Unstructured library imports
 from unstructured.partition.pdf import partition_pdf
 from unstructured.partition.html import partition_html
-from unstructured.documents.elements import CompositeElement,Text
+from unstructured.documents.elements import CompositeElement,Element
 
 # Local imports
 from models.Model import Chatbot
@@ -208,87 +210,200 @@ class CustomSearchTool(BaseTool):
         wrapper = DuckDuckGoSearchAPIWrapper(max_results=25, backend="auto")  # Add list of potential websites in 'source' arg if needed
         self.web_search_tool = DuckDuckGoSearchResults(api_wrapper=wrapper, output_format="list")
 
-    def _run(self, query: Union[str, list]) -> Union[List[Dict[str, str]], Dict[str, str]]:
+    def _run(self, query: Union[str, list]):
         # Check if the query is a list of strings (e.g., multiple search terms)
+        results = []
         if isinstance(query, list):
-            results = []
             for single_query in query:
-                # Handle each query in the list
                 search_results = self.web_search_tool.invoke(single_query)
-                # Extract titles, snippets, and links
-                results.append([
+                # Flatten directly into the main results list
+                print(f'search results in tool call:{search_results}')
+                results.extend([
                     {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
                     for result in search_results
                 ])
-            return results
         else:
-            # If the query is a single string, process it directly
             search_results = self.web_search_tool.invoke(query)
-            return [
+            print(f"search results:{search_results}")
+            results = [
                 {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
                 for result in search_results
             ]
+
+        return results
 
 class WebscrapperTool(BaseTool):
     name :str = "web_scrape"
     description:str = "Useful for information scrapping for websites"
     llm: Optional[Any] = Field(default=None, exclude=True)
+    embeddings: Optional[OllamaEmbeddings] = Field(default=None, exclude=True)
     class Config:
         arbitrary_types_allowed = True
 
     def __init__(self,llm:Chatbot):
         super().__init__()
         self.llm = llm
+        self.embeddings = OllamaEmbeddings(model="nomic-embed-text:latest",
+                                                base_url="http://localhost:11434"  # Adjust the base URL as per your Ollama server configuration
+                                            )
 
     # Solution : https://github.com/Unstructured-IO/unstructured/issues/3642 
-    def parse_html(self,url:str=None) -> List[Text]:
+    def parse_html(self, url: str = None) -> List[Element]:
         """
-        Use a library like BeautifulSoup to parse HTML from the provided URL and use Unstructured for retreving the elements(chunks).
-
-        params
-        ------
-            - url (str): The URL of the website to scrape.
-
-        returns
+        Parse HTML from the provided URL and extract all structured content
+        including titles, subtitles, and text elements using Unstructured's partition_html.
+        
+        Parameters
+        ----------
+        url : str
+            The URL of the website to scrape.
+            
+        Returns
         -------
-            List of unstructured.documents.elements.Text 
+        List[Element]
+            A list of unstructured elements (Title, NarrativeText, ListItem, etc.)
+            extracted from the HTML content, preserving document structure.
         """
         try:
-            # Add your code here to use a library like BeautifulSoup to scrape HTML from the provided URL.
-            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Referer": "https://www.google.com",
+                "Connection": "keep-alive",
+            }
+            session = requests.Session()
+            session.headers.update(headers)
+            response = session.get(url, timeout=10)
             response.raise_for_status()
-
-            # Use BeautifulSoup to parse the HTML
             soup = BeautifulSoup(response.text, "lxml")
+            
+            # More comprehensive content extraction strategy
+            main_content = self._extract_main_content(soup)
+            
+            # Remove unwanted tags but preserve structure
+            self._clean_content(main_content)
 
-            main_content = None
-
-            # Look for common main content containers
-            if soup.find("main"):
-                main_content = soup.find("main")
-            elif soup.find("article"):
-                main_content = soup.find("article")
-            elif soup.find("div", {"id": "content"}):
-                main_content = soup.find("div", {"id": "content"})
-            elif soup.find("div", {"id": "main-content"}):
-                main_content = soup.find("div", {"id": "main-content"})
-            else:
-                # Fallback: take the largest <div> with the most text
-                main_content = max(soup.find_all("div"), key=lambda div: len(div.text), default=soup)
-
-            # Remove unwanted elements (e.g., navigation, footer, ads)
-            for tag in main_content.find_all(["header", "footer", "nav", "aside", "script", "style"]):
-                tag.extract()
-
-            # Convert cleaned content to a string
+            main_title = self.extract_main_title(main_content)
+            
+            # Convert cleaned content to HTML string
             cleaned_html = str(main_content)
-
-            elements = partition_html(text=cleaned_html)
-
-            return elements
-        
+            
+            # Partition the HTML into unstructured elements with better options
+            elements = partition_html(
+                text=cleaned_html,
+                skip_headers_and_footers=True,
+                include_metadata=True,
+                chunking_strategy="by_title",
+                include_page_breaks=True,
+                languages=["en"],  # Adjust as needed
+            )
+            
+            # Return ALL elements to preserve structure (titles, subtitles, text, etc.)
+            return elements,main_title
+            
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Error communicating with web: {e}")
+        
+    def extract_main_title(self, content: BeautifulSoup) -> str:
+        """
+        Extracts the first <h1> tag inside the main content.
+        
+        Parameters
+        ----------
+        content : BeautifulSoup
+            The main content area of the page.
+
+        Returns
+        -------
+        str
+            The text of the first <h1> found, or an empty string if not present.
+        """
+        h1_tag = content.find("h1")
+        return h1_tag.get_text(strip=True) if h1_tag else ""
+
+    def _extract_main_content(self, soup):
+        """
+        Enhanced content extraction with better fallback strategies.
+        """
+        content_selectors = [
+            # Semantic HTML5 tags
+            "main",
+            "article", 
+            "[role='main']",
+            
+            # Common CMS patterns
+            ".content",
+            ".main-content", 
+            ".article-content",
+            ".post-content",
+            ".entry-content",
+            
+            # News/blog specific
+            ".article-body",
+            ".story-body", 
+            ".post-body",
+            
+            # Generic patterns
+            "#content",
+            "#main",
+            "#main-content",
+            ".container .content",
+        ]
+        
+        # Try each selector
+        for selector in content_selectors:
+            try:
+                content = soup.select_one(selector)
+                if content and len(content.get_text(strip=True)) > 250:  # Minimum content threshold
+                    return content
+            except:
+                continue
+        
+        # Fallback: find the div with most text content
+        divs = soup.find_all("div")
+        if divs:
+            main_content = max(
+                divs,
+                key=lambda div: len(div.get_text(strip=True)),
+                default=soup
+            )
+            # Only use if it has substantial content
+            if len(main_content.get_text(strip=True)) > 50:
+                return main_content
+        
+        # Final fallback: use body or entire soup
+        return soup.find("body") or soup
+
+    def _clean_content(self, content):
+        """
+        Remove noise while preserving semantic structure.
+        """
+        # Tags to completely remove
+        noise_tags = [
+            "script", "style", "noscript",
+            "iframe", "embed", "object",
+            # Navigation and UI elements
+            "nav", "header", "footer", 
+            # Ads and social
+            ".advertisement", ".ad", ".ads",
+            ".social-share", ".share-buttons",
+            # Comments and related
+            ".comments", ".comment-section",
+            ".related-articles", ".sidebar",
+            # Cookie/privacy notices
+            ".cookie-notice", ".privacy-notice"
+        ]
+        
+        for selector in noise_tags:
+            if selector.startswith('.'):
+                # CSS class selector
+                for tag in content.select(selector):
+                    tag.decompose()
+            else:
+                # Tag name
+                for tag in content.find_all(selector):
+                    tag.decompose()
     
 
     def summarize_text(self, title, text) -> str:
@@ -300,132 +415,46 @@ class WebscrapperTool(BaseTool):
 
         return self.llm.invoke(prompt.format(text=text, title=title))
 
-    def identify_relevant_passages(self, elements: List[Text], keywords: List[str]) -> List[Dict]:
-        """
-        Identifies and extracts relevant passages from a list of text elements based on given keywords.
+    def identify_relevant_passages(self, elements: List[Element], keywords: List[str], threshold: float = 0.5) -> List[Element]:
+        if not keywords:
+            return []
 
-        This function processes a list of text elements, identifying relevant sections based on the presence
-        of specified keywords. It organizes the relevant content into structured sections, handling different
-        types of elements such as titles, narrative text, and list items.
+        # Embed all keywords as one string or individually
+        keyword_text = " ".join(keywords)
+        keyword_embedding = self.embed_text(keyword_text)
 
-        params
-        ------
-            - elements (List[Text]): A list of Text objects representing the content to be processed.
-            - keywords (List[str]): A list of keywords to identify relevant passages. If None, all passages are considered relevant.
+        relevant_elements = []
 
-        returns
-        -------
-            List[Dict]: A list of dictionaries, each representing a relevant section. Each dictionary contains:
-                - 'section_id': The ID of the section
-                - 'title': The title of the section
-                - 'elements': A list of dictionaries, each containing the relevant text and metadata
+        for el in elements:
+            if not hasattr(el, 'text') or not el.text.strip():
+                continue
 
-        The function handles different scenarios:
-        - When keywords are provided, it extracts passages containing those keywords.
-        - When keywords are None, it extracts all Title and NarrativeText elements.
-        - It maintains the structure and hierarchy of the content, including list item positions.
-        """
-        relevant_sections = {}
-        processed_texts = set()
-        section_titles = {}
-        position_counters = {}
+            element_embedding = self.embed_text(el.text)
+            sim = cosine_similarity([keyword_embedding], [element_embedding])[0][0]
 
-        for element in elements:
-            element = element.to_dict()
-            element_type = element["type"]
+            if sim >= threshold:
+                relevant_elements.append(el)
 
-            # Store title if the element is a Title
-            if element_type == "Title":
-                section_titles[element["element_id"]] = element["text"]
+        return relevant_elements
+    
+    def embed_text(self, text: str) -> List[float]:
+        # Example: OpenAI API or other local model
+        return self.embeddings.embed_query(text)
 
-            if keywords is None:
-                if element_type in {"Title", "NarrativeText"}:
-                    text_key = (element["element_id"], element["text"])
-
-                    if element_type == "NarrativeText":
-                        # Ensure we always get the correct parent section ID
-                        section_id = element["metadata"].get("parent_id")  # Use parent_id from metadata
-                        if not section_id:  
-                            continue  
-
-                        if section_id not in relevant_sections:
-                            relevant_sections[section_id] = {
-                                "section_id": section_id,
-                                "title": section_titles.get(section_id, "Unknown Title"),
-                                "elements": [],
-                            }
-
-                        if text_key not in processed_texts:
-                            processed_texts.add(text_key)
-                            relevant_sections[section_id]["elements"].append({
-                                "text": element["text"],
-                            })
-            else:
-                # Only process relevant element types (Title, NarrativeText, ListItem)
-                if element_type in {"Title", "NarrativeText", "ListItem"}:
-                    text_lower = element["text"].lower()
-
-                    # Check if any keyword is present in the text
-                    if any(keyword in text_lower for keyword in keywords):
-                        parent_id = get_parent_id(element)
-
-                        # If it's a NarrativeText, find its corresponding Title's ID
-                        if element_type == "NarrativeText":
-                            section_id = element["metadata"].get("parent_id")
-                            if not section_id:
-                                continue  
-                        else:
-                            section_id = parent_id  # Titles & ListItems use their own ID
-
-                        # Determine the section title
-                        section_title = section_titles.get(section_id, "Unknown Title")
-
-                        # Initialize section if not already stored
-                        if section_id not in relevant_sections:
-                            relevant_sections[section_id] = {
-                                "section_id": section_id,
-                                "elements": [],
-                                "title": section_title,
-                            }
-
-                        # Only count positions in sections with ListItems
-                        if element_type == "ListItem":
-                            if section_id not in position_counters:
-                                position_counters[section_id] = 0
-                            position_counters[section_id] += 1
-                            position = position_counters[section_id]  
-                        else:
-                            position = None  
-
-                        text_key = (section_id, element["text"])  
-                        if text_key not in processed_texts:
-                            processed_texts.add(text_key)
-
-                            # Only store the position if it's a ListItem or if the section contains ListItems
-                            position_info = {}
-                            if element_type == "ListItem":
-                                position_info["position"] = position  # Store relative position 
-
-                            relevant_sections[section_id]["elements"].append({
-                                "type": element_type,
-                                "text": element["text"],
-                                "metadata": element["metadata"],
-                                **position_info,  # Merge position information 
-                            })
-
-        return list(relevant_sections.values())  # Return as a list of dictionaries
     def chunk_large_text(self, title:str, elements: List, max_tokens: int = 1024) -> List[str]:
         
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=max_tokens,
             chunk_overlap=50
         )
-        text = " ".join([el["text"] for el in elements])  # Combine section text
+        text = " ".join([el.text for el in elements])# Combine section text
         chunks = splitter.split_text(text)  # Split into manageable parts
         return [{"title": title, "text": chunk} for chunk in chunks]
     
     def generate_summaries(self, relevant_sections) -> List[Dict]:
         summaries = []
+        title = ""
+        section_summary = ""
         for section in relevant_sections:
             title = section["title"]
             elements = section["elements"]
@@ -436,20 +465,22 @@ class WebscrapperTool(BaseTool):
             # Summarize each chunk and combine
             section_summary = " ".join(self.summarize_text(chunk["title"], chunk["text"]).content for chunk in chunks)
 
-            summaries.append({"title": title, "summary": section_summary})
+        summaries = {"title": title, "summary": section_summary}
         
         return summaries
 
-    def _run(self,keywords: Union[str, List],url:str) -> List[Dict]:
-
-        elements = self.parse_html(url=url)
+    def _run(self, keywords: Union[str], url: str) -> List[Dict]:
+        elements,title = self.parse_html(url=url)
         keywords = [keywords] if isinstance(keywords, str) else (keywords if isinstance(keywords, list) and keywords else None)
-        extracted_data = self.identify_relevant_passages(elements, keywords)
-        
+
         if keywords:
-            return extracted_data
-        elif keywords is None:
-           return self.generate_summaries(extracted_data)
+            # Now returns structured list of sections
+            relevant_sections = self.identify_relevant_passages(elements, keywords)
+            return relevant_sections
+        else:
+            # Summarize all content if no keywords are given
+            full_content_section = {"title": title, "elements": elements}
+            return self.generate_summaries([full_content_section])
     
     def _arun(self):
         raise NotImplementedError("This tool does not support async")

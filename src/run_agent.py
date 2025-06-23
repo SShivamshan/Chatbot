@@ -2,7 +2,7 @@ import sys
 sys.path.append(".")
 import logging
 from models.Model import Chatbot
-from models.Agent import Agent
+from models.WebAgent import Agent
 from src.utils import pretty_print_answer
 
 def main():

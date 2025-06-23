@@ -6,6 +6,7 @@ import json
 import logging
 import subprocess
 from langchain_ollama import ChatOllama
+from openai import OpenAI
 
 class Chatbot(ChatOllama):
     base_url: str = Field(None,alias='base_url')
@@ -154,3 +155,73 @@ class Chatbot(ChatOllama):
         }
 
 
+class LLMHandler:
+    """Handles interactions with the LLM for code translation using OpenAI API"""
+    
+    def __init__(self, api_key=None, 
+                 model_name="gpt-4.1", 
+                 max_tokens=8192,
+                 temperature=0.0):
+        if not api_key:
+            raise ValueError("OpenAI API key must be provided or set as OPENAI_API_KEY environment variable")
+        
+        self.api_key = api_key
+        self.client = OpenAI(api_key=self.api_key)
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        
+        self.logger = self._setup_logging()
+        self.logger.info(f"LLMHandler initialized with model {self.model_name}")
+        
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        return logging.getLogger(__name__)
+    
+    def _call(self, prompt: str, image=None):
+        """
+        Sends a prompt or an image (with optional prompt) to the OpenAI API.
+
+        Args:
+            prompt (str): The textual prompt to send.
+            image (optional): The image input. Could be a path, bytes, or a special object. Default is None.
+
+        Returns:
+            str or dict: The API response content, string for text completions or dict for image.
+        """
+        try:
+            if image is None:
+                self.logger.info("Sending text prompt to OpenAI API.")
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+                content = response.choices[0].message.content
+                self.logger.info("Received text completion response.")
+                return content
+            else:
+                self.logger.info("Sending image with prompt to OpenAI API.")
+            
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "You are an image understanding assistant."},
+                        {"role": "user", "content": prompt, "image_url": image}
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+                content = response.choices[0].message.content
+                self.logger.info("Received image understanding response.")
+                return content
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI API call failed: {e}", exc_info=True)
+            raise
+
+    

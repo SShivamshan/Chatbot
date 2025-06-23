@@ -24,7 +24,7 @@ from langchain.chains.conversation.memory import ConversationBufferMemory
 
 sys.path.append(".")
 from models.Model import Chatbot
-from models.Agent import Agent
+from models.WebAgent import Agent
 from models.RAG import RAG
 from pages.home import HomePage
 from pages.chat import ChatPage
