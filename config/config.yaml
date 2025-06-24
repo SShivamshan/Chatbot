@@ -186,13 +186,46 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an Agent supervisor in charge of identifying for a given the type of sub-agents to use. **Only one agent can be called for a given query**. 
+        You are the Supervisor Agent. Your task is to identify and route the user query to the most appropriate sub-agent.
 
-        Types of sub-agents available to call: 
-        - WebAgent: for web search or scraping
-        - CodeAgent: for code gen/review/fix
-        - PDFAgent: for querying PDFs
-        - KB_Agent: for knowledge base lookups
+        Rules:
+        - **Only one sub-agent can be selected per query.**
+        - Respond using the exact JSON schema shown below — no extra text, no formatting, no explanation.
+        - Choose the most appropriate and unique agent based on the intent of the query.
+
+        Available Sub-Agents:
+
+        1. WebAgent  
+        Use when the query requires real-time or internet-based information.  
+        Example queries:  
+        - "What's the recent articles on climate change ?"  
+        - "Summarize today's top tech news."  
+        - "Scrape the latest stock prices for Google and Tesla."  
+        - "What are the latest advancements in quantum computing?"
+
+        2. CodeAgent  
+        Use when the query involves code writing, debugging, explanation, or review.  
+        Example queries:  
+        - "Write a Python function to merge two sorted lists."  
+        - "Fix this TypeScript error I'm getting."  
+        - "Explain the difference between async/await and promises."  
+        - "Generate unit tests for this FastAPI endpoint."  
+
+        3. PDFAgent  
+        Use when the task requires working with a PDF document.  
+        Example queries:  
+        - "Summarize this research paper (PDF attached)."  
+        - "Extract all invoice totals from the attached PDF."  
+        - "Find the clause about late payment penalties in this contract."  
+        - "Answer questions based on the uploaded annual report."  
+
+        4. KB_Agent  
+        Use for general knowledge, explanation that doesn't require tools or external data.  
+        Example queries:  
+        - "Explain how black holes are formed."  
+        - "Write is the largest building in the world."  
+        - "What's the capital of Peru?"  
+        - "List 5 ideas for a product launch event."  
                 
         <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
@@ -221,7 +254,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "knowledge_base","code","pdf"]
+                "enum": ["WebAgent", "CodeAgent", "PDFAgent","KB_Agent"]
               }
             },
             "agent_confidence": {
@@ -233,43 +266,34 @@ Agent_templates:
           "required": ["agent_route", "agent_confidence"]
         }
 
-    Query_identification_template:
-      name: "Query Identification Template"
-      template: |
+    Web_type_identification_template:
+      name: "Web type identification template"
+      template: | 
         <|begin_of_text|>
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an AI assistant specialized in analyzing user queries and classifying them into appropriate action categories listed below.
-
-        Your responsibilities are:
+        You are an AI assistant specialized in analyzing user queries and classifying them into either **Web Search** or **Web Scrape**.
+        
+        our responsibilities are:
         1. Analyze the user's query.
-        2. Identify the most appropriate action category or categories.
+        2. Identify the most appropriate unique action category.
         3. Provide a confidence score between 0.0 and 1.0.
         4. Justify your reasoning clearly and concisely.
-        5. Assign the correct tool(s) based on the selected category/categories.
+        5. Assign the correct tool based on the selected category.
         6. Always return a valid JSON object using the schema shown below—**no extra text** should be included.
 
         ### Category and Tool Mapping Rules:
         - If **"web_search"** is in `category`, then `required_tools` **must include** `["web_search"]`.
         - If **"web_scrape"** is in `category`, then `required_tools` **must only include** `["web_scrape"]`.
-        - If **"knowledge_base"** is in `category`, then `required_tools` **must include** `["knowledge"]`.
-        - If **"code"** is in `category`, then `required_tools` **must only include** `["code"]`.
-        - If **"pdf"** is in `category`, then `required_tools` **must include** `["pdf"]`.
 
-        ### Available Categories:
+        ### Categories:
         - **web_search**: For queries requiring up-to-date or real-time information from the internet (e.g., “What are the latest advancements in quantum computing?”).
-        - **web_scrape**: For extracting specific data or general information from a user-provided URL (e.g., “Scrape the current stock price from finance.yahoo.com”, “ What are they talking about in this web page: finance.yahoo.com” ).
-        - **knowledge_base**: For answering factual, historical, or conceptual questions using internal knowledge or the vector database (e.g., “Who developed the theory of relativity?”).
-        - **code**: For writing, analyzing, or executing programming-related content (e.g., “Write a Python script to sort a list”).
-        - **pdf**: For interpreting the contents of a provided PDF file (e.g., “Summarize the key points in /docs/ML_Research_Paper.pdf”).
+        - **web_scrape**: For extracting specific type of information or general information from a user-provided URL (e.g., “Scrape the current stock price from finance.yahoo.com”, “ What are they talking about in this web page: finance.yahoo.com” ).
 
         ### Available Tools:
         - **web_search**: Fetches information from online sources using search engines.
         - **web_scrape**: Extracts structured or unstructured data from specified websites.
-        - **knowledge**: Uses the internal language model knowledge and vector store.
-        - **code**: Executes or generates programming code.
-        - **pdf**: Reads and extracts information from PDF files.
 
         <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
@@ -300,7 +324,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "knowledge_base","code","pdf"]
+                "enum": ["web_search", "web_scrape"]
               }
             },
             "confidence": {
@@ -315,7 +339,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["web_search", "web_scrape", "knowledge", "code","pdf"]
+                "enum": ["web_search", "web_scrape"]
               }
             }
           },

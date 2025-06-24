@@ -5,6 +5,7 @@ from langchain.prompts import PromptTemplate
 from langchain.tools import Tool
 from langgraph.graph import StateGraph
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.messages import AIMessage
 from models.Model import Chatbot
 from src.utils import *
 from src.AgentLogger import AgentLogger
@@ -24,6 +25,7 @@ class GraphState(TypedDict):
     scrape_results: Optional[List[Dict[str, Any]]]
     scrape_url: Optional[str]
     final_answer: Optional[str]
+    sources: Optional[List]
 
 class WebAgent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -56,7 +58,7 @@ class WebAgent(BaseModel):
         )
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print)
-        self.logger.logger.info(f"Initializing Agent with model: {model_name}")
+        self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
 
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
@@ -64,15 +66,15 @@ class WebAgent(BaseModel):
             model=model_name,
             context_length=context_length
         )
-        self.logger.logger.info("LLM initialized")
+        self.logger.logger.info("Web Agent LLM initialized")
         # Initialize components
         self.tools = self.initialize_tools()
         self.ai_template = load_ai_template('config/config.yaml')
-        self.logger.logger.info("Tools and templates loaded")
+        self.logger.logger.info("Web Agent Tools and templates loaded")
 
 
         # Initialize agent chains
-        QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name="Query_identification_template")
+        QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name="Web_type_identification_template")
         self.question_routing = QUERY_IDENTIFICATION_PROMPT | self.llm | JsonOutputParser()
 
         QUERY_WEB_PROMPT = self._create_template(template_name="Query_web_template")
@@ -140,7 +142,7 @@ class WebAgent(BaseModel):
     
     def create_graph(self):
         """Create a LangGraph workflow for agent operations."""
-        self.logger.logger.info("Creating agent workflow graph")
+        self.logger.logger.info("Creating WebAgent workflow graph")
         workflow = StateGraph(GraphState)
         logger = self.logger
 
@@ -272,7 +274,6 @@ class WebAgent(BaseModel):
                                 f"Found {len(search_results)} results")
                 
                 updated_state = {**state, "search_results": search_results}
-            print(search_results)
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
         
@@ -280,6 +281,7 @@ class WebAgent(BaseModel):
         def generate_answer(state: GraphState) -> GraphState:
            
             node_name = "generate_answer"
+            sources = []
             node_start_time = logger.log_node_entry(node_name, state)
             scrape_content = ""
             if state.get("scrape_results"):
@@ -292,25 +294,50 @@ class WebAgent(BaseModel):
                 final_answer = scrape_content
 
             elif state.get("search_results"):
-                top_results = state["search_results"][:3]  # or all if short
+                search_results = state["search_results"]
+                top_results = []
+                all_images = []
+
+                if isinstance(search_results, dict):
+                    top_results = search_results.get("results", [])
+                    all_images = search_results.get("images", [])
+                elif isinstance(search_results, list):
+                    for response in search_results:
+                        top_results.extend(response.get("results", []))
+                        all_images.extend(response.get("images", []))
+
+                # Format search results for LLM
                 result_text = "\n\n".join([
-                    f"Title: {res.get('title')}\nSnippet: {res.get('snippet')}"
-                    for res in top_results
+                    f"Title: {res.get('title')}\nContent: {res.get('content')}"
+                    for res in top_results if res.get("title") and res.get("content")
                 ])
+
+                # image entries with url + description
+                formatted_images = [
+                    {"url": img.get("url"), "description": img.get("description")}
+                    for img in all_images if img.get("url") and img.get("description")
+                ]
+
+                # Build prompt
                 prompt = f"""
-                Query: {state["query"]}
+                Query: {state['query']}
+                
                 Search Results:
                 {result_text}
 
                 Based on the above search results, provide a comprehensive summary for the given query.
                 """
+
                 final_answer = self.llm.invoke(prompt)
 
-                # Prepare sources (for URLs)
+                # Prepare sources
                 sources = [
                     {"title": res.get("title"), "url": res.get("url")}
-                    for res in top_results
+                    for res in top_results if res.get("title") and res.get("url")
                 ]
+
+                # Append images as sources
+                sources.extend(formatted_images)
             else:
                 prompt = f"""
                 Query: {state["query"]}
@@ -333,7 +360,7 @@ class WebAgent(BaseModel):
         workflow.add_node("web_scrape", run_web_scraper)
         workflow.add_node("generate_answer", generate_answer)
 
-        # Define edges
+        # Define start point
         workflow.set_entry_point("identify_query")
 
         def route_after_identification(state: GraphState) -> List[str]:
@@ -394,22 +421,17 @@ class WebAgent(BaseModel):
     def run(self, query: str):
         """Run the agent with the given query."""
         self.logger.start_agent_run(query)
-        self.logger.logger.info(f"Running agent with query: {query}")
+        self.logger.logger.info(f"Running WebAgent with query: {query}")
         
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
-            # Store the results in a dictionary
-            final_result = {
-                "query": result.get("query"),
-                "final_answer": result.get("final_answer"),
-                "sources": result.get("sources")  
-            }
 
             self.logger.end_agent_run(result)
-            return {
-                "answer": final_result.get("final_answer", "No answer generated."),
-                "sources": final_result.get("sources", [])
+            return { # the final answer can be in AI message type or just str
+                "answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated."),
+                "sources": result.get("sources", []),
+                "query": result.get("query", "")
             }
         except Exception as e:
             self.logger.log_error("agent_run", e)

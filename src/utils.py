@@ -16,6 +16,7 @@ import subprocess
 from collections import defaultdict
 from datetime import datetime
 from collections import Counter
+from dotenv import load_dotenv
 
 # Third-party library imports
 import yaml
@@ -35,11 +36,10 @@ from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser,JsonOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
-from langchain.tools import BaseTool, tool
+from langchain.tools import BaseTool
 from langchain_chroma import Chroma
 from langchain.schema import BaseRetriever,HumanMessage
-from langchain_community.tools import DuckDuckGoSearchResults
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+from langchain_tavily import TavilySearch
 
 # Unstructured library imports
 from unstructured.partition.pdf import partition_pdf
@@ -197,38 +197,68 @@ class CustomRetriever(BaseRetriever, BaseModel):
 #================================================================ Web srapping/search tools =================================================================# 
 class CustomSearchTool(BaseTool):
     name: str = "web_search"
-    description: str = "Useful for when you need to answer questions about current or new information through the web."
-    web_search_tool: Optional[DuckDuckGoSearchResults] = Field(default=None, exclude=True)  
-    wrapper: Optional[DuckDuckGoSearchAPIWrapper] = Field(default=None, exclude=True)
+    description: str = "Useful for answering current or recent questions using Tavily web search."
+    web_search_tool: Optional[TavilySearch] = Field(default=None, exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
 
     def __init__(self):
         super().__init__()
-        # Initialize the wrapper and search tool
-        wrapper = DuckDuckGoSearchAPIWrapper(max_results=25, backend="auto")  # Add list of potential websites in 'source' arg if needed
-        self.web_search_tool = DuckDuckGoSearchResults(api_wrapper=wrapper, output_format="list")
+        load_dotenv()
+        tavily_api_key = os.getenv("TAVILY_API_KEY")
+        if not tavily_api_key:
+            raise ValueError("TAVILY_API_KEY not set in environment variables.")
 
-    def _run(self, query: Union[str, list]):
-        # Check if the query is a list of strings (e.g., multiple search terms)
+        # Initialize the Tavily tool
+        self.web_search_tool = TavilySearch(
+            tavily_api_key=tavily_api_key,
+            max_results=5,
+            topic="general",
+            include_images=True,
+            include_image_descriptions=True
+        )
+    
+    def format_tavily_response(self, raw_response: dict):
+        """
+        Format travily response for the llm usage
+        """
+        # Filter results with score > 0.35
+        filtered_results = [
+            {
+                "title": result.get("title"),
+                "url": result.get("url"),
+                "content": result.get("content"),
+            }
+            for result in raw_response.get("results", [])
+            if result.get("score", 0) > 0.35
+        ]
+
+        # Get only the first 2 images with url and description
+        images = raw_response.get("images", [])[:2]
+        formatted_images = [
+            {"url": img.get("url"), "description": img.get("description")}
+            for img in images
+        ]
+
+        return {
+            "results": filtered_results,
+            "images": formatted_images
+        }
+    
+    def _run(self, query: Union[str, List[str]]):
         results = []
         if isinstance(query, list):
             for single_query in query:
-                search_results = self.web_search_tool.invoke(single_query)
-                # Flatten directly into the main results list
-                print(f'search results in tool call:{search_results}')
-                results.extend([
-                    {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
-                    for result in search_results
-                ])
+                search_results = self.web_search_tool.invoke({"query": single_query})
+                formatted_search_results = self.format_tavily_response(search_results)
+                # print(f"search results in tool call: {formatted_search_results}")
+                results.append(formatted_search_results)
         else:
-            search_results = self.web_search_tool.invoke(query)
-            print(f"search results:{search_results}")
-            results = [
-                {"title": result.get("title"), "snippet": result.get("snippet"), "url": result.get("link")}
-                for result in search_results
-            ]
+            search_results = self.web_search_tool.invoke({"query": query})
+            # print(f"search results: {search_results}")
+            formatted_search_results = self.format_tavily_response(search_results)
+            results = formatted_search_results
 
         return results
 
@@ -700,9 +730,6 @@ class PDFTools(BaseTool):
     def __init__(self, llm: Chatbot):
         super().__init__()
         self.llm = llm
-
-    
-
 
 def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     """
