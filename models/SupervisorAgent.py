@@ -12,6 +12,7 @@ from models.WebAgent import WebAgent
 class GraphState(TypedDict):
     query: str
     agent_route: Optional[List[str]]
+    agent_routes: Optional[List[str]]
     agent_confidence: Optional[float]
     subagent_results: Optional[List]
 
@@ -20,7 +21,6 @@ class SupervisorAgent(BaseModel):
     model_name: str = Field(default="llama3.2:3b")
     context_length: int = Field(default=18000)
     tools: Dict = Field(default_factory=dict)
-    ai_template: dict = Field(default_factory=dict)
     llm: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
     agent_routing: Optional[Any] = Field(default=None, exclude=True)
@@ -46,7 +46,6 @@ class SupervisorAgent(BaseModel):
 
         self.logger.logger.info("Supervisor LLM initialized")
         self.tools = self.initialize_sub_agents()
-        self.ai_template = load_ai_template('config/config.yaml')
         self.logger.logger.info("Sub Agents loaded")
 
         AGENT_IDENTIFICATION_PROMPT = self._create_template(template_name="Agent_identification_template")
@@ -55,7 +54,8 @@ class SupervisorAgent(BaseModel):
     def _create_template(self, template_name: str) -> PromptTemplate:
         try:
             self.logger.logger.debug("Loading template")
-            template_config = self.ai_template["Agent_templates"][template_name]
+            templates = load_ai_template(config_path="config/config.yaml")
+            template_config = templates["Agent_templates"][template_name]
             template = template_config["template"]
             input_vars = [var["name"] for var in template_config.get("input_variables", [])]
             return PromptTemplate(template=template, input_variables=input_vars)
@@ -86,25 +86,38 @@ class SupervisorAgent(BaseModel):
             return updated_state
 
         def retrieve_agent_results(state: GraphState) -> GraphState:
-            node_name = f"{'_'.join(state.get('agent_route', ['unknown']))}_retriever"
-            node_start_time = logger.log_node_entry(node_name, state)
-
-            if state.get("agent_route"):
-                results = []
-                for route in state["agent_route"]:
-                    if route in self.tools:
-                        logger.log_tool_call(route, {"query": state.get("query", "")})
-                        result = self.tools[route].run(state["query"])
-                        results.append(result)
-                    else:
-                        logger.logger.warning(f"Unknown tool: {route}")
-                updated_state = {**state, "subagent_results": results}
-            else:
+            agent_routes = state.get("agent_route", [])
+            subagent_results = state.get("subagent_results", {})
+            
+            if not agent_routes:
                 logger.logger.warning("No valid agent_route identified.")
-                updated_state = {**state, "subagent_results": []}
+                return {**state, "subagent_results": subagent_results}
+            
+            for route in agent_routes:
+                node_name = f"{route}_retriever"
+                node_start_time = logger.log_node_entry(node_name, state)
 
-            logger.log_node_exit(node_name, updated_state, node_start_time)
+                if route in self.tools:
+                    logger.log_tool_call(route, {"query": state.get("query", "")})
+
+                    # You can add custom behavior per agent here
+                    if route == "KBAgent":
+                        pass  # Custom logic if needed
+
+                    result = self.tools[route].run(state["query"])
+                    subagent_results[route] = result
+                else:
+                    logger.logger.warning(f"Unknown tool: {route}")
+
+                logger.log_node_exit(node_name, state, node_start_time)
+
+            # All agents have been processed
+            updated_state = {
+                **state,
+                "subagent_results": subagent_results
+            }
             return updated_state
+
 
         def format_agent_results(state: GraphState) -> GraphState:
             logger.logger.debug("Formatting subagent results (stubbed)")
@@ -134,10 +147,10 @@ class SupervisorAgent(BaseModel):
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
-            self.logger.end_agent_run(result)
-            return result  # ✅ Return the result to user
+            self.logger.end_agent_run(result,False)
+            return result["subagent_results"]
         except Exception as e:
             self.logger.log_error("agent_run", e)
-            self.logger.logger.error(f"Agent run failed: {str(e)}")
-            return f"Error running agent: {str(e)}"
+            self.logger.logger.error(f"SupervisorAgent run failed: {str(e)}")
+            return f"Error running SupervisorAgent: {str(e)}"
     

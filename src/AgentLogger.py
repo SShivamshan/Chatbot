@@ -16,7 +16,7 @@ class AgentLogger:
     """
     
     def __init__(self, log_level=logging.INFO, console_output=True, file_output=False, 
-                 log_file="agent_logs.log", pretty_print=True):
+                 log_file="agent_logs.log", pretty_print=True, Agent_name:str = "Supervisor Agent"):
         """
         Initialize the logger with desired output formats.
         
@@ -26,12 +26,14 @@ class AgentLogger:
             file_output: Whether to output logs to a file
             log_file: Name of the log file if file_output is True
             pretty_print: Whether to use Rich for formatted console output
+            Agent_name: Defines the agent's name that's been run
         """
         self.log_level = log_level
         self.console_output = console_output
         self.file_output = file_output
         self.log_file = log_file
         self.pretty_print = pretty_print
+        self.agent_name = Agent_name
         
         # Initialize logger
         self.logger = logging.getLogger("AgentLogger")
@@ -97,8 +99,8 @@ class AgentLogger:
         self.metrics["node_count"] = {}
         
         if self.pretty_print and self.console_output:
-            self.console.print(Panel(f"[bold red]Starting agent run[/bold red]\n\n[yellow]Query:[/yellow] {query}", 
-                                     title="Agent Run Started", border_style="red"))
+            self.console.print(Panel(f"[bold red]Starting {self.agent_name} run[/bold red]\n\n[yellow]Query:[/yellow] {query}", 
+                                     title=f"{self.agent_name} Run Started", border_style="red"))
         else:
             self.logger.info(f"Starting agent run with query: {query}")
     
@@ -228,14 +230,14 @@ class AgentLogger:
                 else:
                     self.logger.debug(f"Tool Output: {outputs}")
     
-    def end_agent_run(self, final_result: Dict[str, Any]):
+    def end_agent_run(self, final_result: Dict[str, Any], final_answer:bool = True):
         """Log the completion of an agent run with results."""
         self.metrics["end_time"] = time.time()
         self.metrics["total_time"] = self.metrics["end_time"] - self.metrics["start_time"]
         
         if self.pretty_print and self.console_output:
             # Create a metrics table
-            metrics_table = Table(title="Run Metrics", show_header=True)
+            metrics_table = Table(title=f"{self.agent_name} Run Metrics", show_header=True)
             metrics_table.add_column("Metric", style="bold cyan")
             metrics_table.add_column("Value", style="yellow")
             
@@ -249,27 +251,29 @@ class AgentLogger:
             for node, time_taken in self.metrics["node_times"].items():
                 metrics_table.add_row(f"Node {node} time", f"{time_taken:.2f}s")
             
-           # Extract the answer for display
-            answer = final_result.get("final_answer", "No answer generated.")
-            if answer == "No answer generated.":
-                display_answer = answer
-            elif isinstance(answer, str):
-                # If it's already a string, use it directly
-                display_answer = answer
-            else:
-                # If it's an AI message object, extract the content
-                display_answer = answer.content
+            if final_answer:
+                # Extract the answer for display
+                answer = final_result.get("final_answer", "No answer generated.")
+                if answer == "No answer generated.":
+                    display_answer = answer
+                elif isinstance(answer, str):
+                    # If it's already a string, use it directly
+                    display_answer = answer
+                else:
+                    # If it's an AI message object, extract the content
+                    display_answer = answer.content
 
-            # Truncate if too long
-            if len(display_answer) > 500:
-                display_answer = display_answer[:500] + "... [truncated]"
+                # Truncate if too long
+                if len(display_answer) > 500:
+                    display_answer = display_answer[:500] + "... [truncated]"
 
-            self.console.print(Panel(
-                f"[bold red]Agent run completed[/bold red]\n\n"
-                f"[yellow]Final Answer:[/yellow]\n{display_answer}",
-                title="Run Completed",
-                border_style="red"
-            ))
+                self.console.print(Panel(
+                    f"[bold red]Agent run completed[/bold red]\n\n"
+                    f"[yellow]Final Answer:[/yellow]\n{display_answer}",
+                    title="Run Completed",
+                    border_style="red"
+                ))
+
             self.console.print(metrics_table)
         else:
             self.logger.info(f"Agent run completed in {self.metrics['total_time']:.2f}s")

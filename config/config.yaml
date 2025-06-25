@@ -56,7 +56,8 @@ Prompt_templates:
         - name: user_input
           description: The user's input in the conversation
           is_required: true
-          
+   
+# ==================================================================================== RAG template ==================================================================================== #
     RAG_templates:
       name: "RAG Templates"
       template: |
@@ -177,8 +178,16 @@ Prompt_templates:
           description: The user's original question
           is_required: true
 
+#########################################################################################################
+#                                                                                                       #
+#   The following templates presnet down under corresponds to the Multi agents approach that is being   #
+#   used to create the different agents as well as their tools.                                         # 
+#   For example the code Agent tools such as code review and code correct and any more such tools       #
+#   needs to be added under their corresponding section.                                                #
+#                                                                                                       #
+#########################################################################################################
 Agent_templates:
-
+# ==================================================================================== Supervisor Agent template ==================================================================================== #
     Agent_identification_template:
       name: "Agent identification template"
       template: |
@@ -188,44 +197,17 @@ Agent_templates:
 
         You are the Supervisor Agent. Your task is to identify and route the user query to the most appropriate sub-agent.
 
-        Rules:
-        - **Only one sub-agent can be selected per query.**
-        - Respond using the exact JSON schema shown below — no extra text, no formatting, no explanation.
-        - Choose the most appropriate and unique agent based on the intent of the query.
+        Your responsibilities are:
+        1. Analyze the user's query.
+        2. **Only one sub-agent can be selected per query.**
+        3. Always return a valid JSON object using the schema shown below—**no extra text** should be included. 
+        4. Identify the most appropriate agent category. 
 
         Available Sub-Agents:
-
-        1. WebAgent  
-        Use when the query requires real-time or internet-based information.  
-        Example queries:  
-        - "What's the recent articles on climate change ?"  
-        - "Summarize today's top tech news."  
-        - "Scrape the latest stock prices for Google and Tesla."  
-        - "What are the latest advancements in quantum computing?"
-
-        2. CodeAgent  
-        Use when the query involves code writing, debugging, explanation, or review.  
-        Example queries:  
-        - "Write a Python function to merge two sorted lists."  
-        - "Fix this TypeScript error I'm getting."  
-        - "Explain the difference between async/await and promises."  
-        - "Generate unit tests for this FastAPI endpoint."  
-
-        3. PDFAgent  
-        Use when the task requires working with a PDF document.  
-        Example queries:  
-        - "Summarize this research paper (PDF attached)."  
-        - "Extract all invoice totals from the attached PDF."  
-        - "Find the clause about late payment penalties in this contract."  
-        - "Answer questions based on the uploaded annual report."  
-
-        4. KB_Agent  
-        Use for general knowledge, explanation that doesn't require tools or external data.  
-        Example queries:  
-        - "Explain how black holes are formed."  
-        - "Write is the largest building in the world."  
-        - "What's the capital of Peru?"  
-        - "List 5 ideas for a product launch event."  
+        - **WebAgent**: For queries requiring up-to-date or real-time information from the internet (e.g., “What are the latest advancements in quantum computing?”) or For extracting specific data or general information from a user-provided URL (e.g., “Scrape the current stock price from finance.yahoo.com”, “ What are they talking about in this web page: finance.yahoo.com” ).
+        - **KBAgent**: For answering factual, historical, or conceptual questions using internal knowledge or the vector database (e.g., “Who developed the theory of relativity?”).
+        - **CodeAgent**: For writing, analyzing, or executing programming-related content (e.g., “Write a Python script to sort a list”).
+        - **PDFAgent**: For interpreting the contents of a provided PDF file (e.g., “Summarize the key points in /docs/ML_Research_Paper.pdf”).
                 
         <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
@@ -254,7 +236,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["WebAgent", "CodeAgent", "PDFAgent","KB_Agent"]
+                "enum": ["WebAgent", "CodeAgent", "PDFAgent", "KBAgent"]
               }
             },
             "agent_confidence": {
@@ -265,7 +247,7 @@ Agent_templates:
           },
           "required": ["agent_route", "agent_confidence"]
         }
-
+# ==================================================================================== Web Agent template ==================================================================================== # 
     Web_type_identification_template:
       name: "Web type identification template"
       template: | 
@@ -353,25 +335,29 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an expert in classifying user queries for web scraping tasks.
+        You are an expert in classifying user queries for web scraping tasks and return a JSON object with the following: 
+        - category: one of the following : **general_summary** or **specific_information**
+        - url: url present in the query
 
         Your task is to:
         - Determine whether the user is asking for **general_summary** or **specific_information** from a webpage.
         - Extract the **URL** if present in the query.
 
         ### Category Definitions:
-        - **general_summary**: The user is requesting an overview of the webpage’s content, topics, or discussion points.  
+        - **general_summary**: The user is requesting an overview of the webpage's content, topics, or discussion points.  
           - Examples:
             - "What does this page talk about: {{url}}?"
             - "Summarize the content at {{url}}."
 
         - **specific_information**: The user is requesting a specific piece of data or detail from the webpage.  
           - Examples:
-            - "What is the CEO’s name on {{url}}?"
+            - "What is the CEO's name on {{url}}?"
             - "Get the stock price listed on {{url}}."
 
+        <|start_header_id|>user<|end_header_id|>
         **Query:** {query}
 
+        <|start_header_id|>assistant<|end_header_id|>
         ### Output (Only return valid JSON in this format):
         ```json
         {{
@@ -382,8 +368,6 @@ Agent_templates:
 
         <|eot_id|>
         <|end_of_text|>
-
-        <|start_header_id|>assistant<|end_header_id|>
 
       input_variables:
         - name: query
@@ -412,7 +396,7 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping.  
+        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping and return it with the JSON object given down below. 
         
         - If `query_type` is **"web_search"**, prioritize **broad but relevant keywords** with synonyms and related terms to ensure optimal search engine retrieval.  
         - If `query_type` is **"web_scrape"**, prioritize **precise keywords** that help locate structured(sections, information, figures) data from specific sources, like research papers, company websites, or databases.  
@@ -423,22 +407,23 @@ Agent_templates:
         - **Prioritize relevant file formats** (PDF, HTML) for **web_search**.  
         - Append file types (e.g., `:pdf`, `:html`) to the keyword for **web_search** but not for **web_scrape**.  
 
-        Return only a JSON object with the following schema:  
-        {{
-          "keywords": string[]
-        }}
-
         Example Output format:
         - For a **web search** query like "Lidar camera detection", return `["Lidar camera detection:pdf", "Lidar camera detection:html"]`  
         - For a **web scraping** query like "Recent research on LiDAR sensors", return `["LiDAR sensor detection", "LiDAR sensor technology"]`  
 
+        <|start_header_id|>user<|end_header_id|>
         Query to analyze: {query}  
-        Query Type: {query_type}  
-
-        <|eot_id|>
-        <|end_of_text|>
+        Query Type: {query_type} 
 
         <|start_header_id|>assistant<|end_header_id|>
+        Return only a JSON object with the following schema:  
+        ```json
+        {{
+          "keywords": string[]
+        }}
+        ``` 
+        <|eot_id|>
+        <|end_of_text|>
 
       input_variables:
         - name: query
@@ -463,6 +448,7 @@ Agent_templates:
           "required": ["keywords"]
         }
 
+# ==================================================================================== Code Agent template ==================================================================================== #
     Code_research_template:
       name: Code_research_template
       template: |
@@ -995,4 +981,109 @@ Agent_templates:
           "required": ["mermaid"]
         }
 
-## Add pdf rag agent    
+# ==================================================================================== Knowledge base Agent template ==================================================================================== #  
+
+    Domain_context_template:
+      name: "Domain context template"
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert in classifying the domain and subdomain context of user queries. Your task is to analyze the given query and return them in a JSON object with:
+        - domain: one of ["research", "artistic", "historical", "legal", "general"]
+        - subdomain:  use a short descriptive label (e.g., "object detection", "Renaissance art", "contract law", "climate science").
+        
+        ### Available domains:
+        - research
+        - artistic
+        - historical
+        - legal
+        - general
+
+        ### Guidelines:
+        - Choose only **one** domain that best fits the query.
+        - For the subdomain, use a concise and descriptive phrase that best captures the specific topic of the query (e.g., "object detection", "Renaissance art", "contract law", "climate science")
+        - If unsure, classify under `"general"` and use the subdomain to reflect the topic.
+
+        <|start_header_id|>user<|end_header_id|>
+        {query}
+        
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+        "domain": str,
+        "subdomain" str
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+
+      input_variables:
+        - name: query
+          description: The query to be classified into the different domain context
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "string"
+            },
+            "subdomain": {
+              "type": "string"
+            }
+          },
+          "required": ["domain", "subdomain"]
+        }
+
+    Knowledge_base_template:
+      name: "Knowledge base template"
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert in the field of **{domain}**, with specialized knowledge in **{subdomain}**. Your task is to answer the following user query clearly and accurately. 
+        Only return a JSON object with the following structure:
+
+        - **answer**: A concise and informative response to the query.
+
+        Respond **only with a valid JSON object**, and do not include any explanations or formatting outside of the JSON.
+
+        <|start_header_id|>user<|end_header_id|>
+        {query}
+        
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+        "answer":str
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+
+      input_variables:
+        - name: query
+          description: The query given by the user
+          is_required: true
+        - name: domain
+          description: The domain context for the given query
+          is_required: true
+        - name: subdomain
+          description: The subdomain for the given domain
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "answer": {
+              "type": "string"
+            },
+          },
+          "required": ["answer"]
+        }

@@ -1,8 +1,6 @@
-import yaml
 from typing import TypedDict, List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from langchain.prompts import PromptTemplate
-from langchain.tools import Tool
 from langgraph.graph import StateGraph
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.messages import AIMessage
@@ -32,13 +30,10 @@ class WebAgent(BaseModel):
     model_name: str = Field(default="llama3.2:3b")
     context_length: int = Field(default=18000)
     tools: Dict = Field(default_factory=dict)
-    ai_template: dict = Field(default_factory=dict)
     llm: Optional[Any] = Field(default=None, exclude=True)
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     question_to_keywords: Optional[Any] = Field(default=None, exclude=True)
     query_web_scrape: Optional[Any] = Field(default=None, exclude=True)
-    code_query_identification: Optional[Any] = Field(default=None, exclude=True)
-    code_list: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
     
     def __init__(
@@ -51,13 +46,9 @@ class WebAgent(BaseModel):
         pretty_print: bool = True
     ):
         """Initialize the agent with modern LangChain patterns."""
-        super().__init__(
-            base_url=base_url,
-            model_name=model_name,
-            context_length=context_length
-        )
+        super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print)
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent")
         self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
 
         # Initialize LLM
@@ -69,11 +60,6 @@ class WebAgent(BaseModel):
         self.logger.logger.info("Web Agent LLM initialized")
         # Initialize components
         self.tools = self.initialize_tools()
-        self.ai_template = load_ai_template('config/config.yaml')
-        self.logger.logger.info("Web Agent Tools and templates loaded")
-
-
-        # Initialize agent chains
         QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name="Web_type_identification_template")
         self.question_routing = QUERY_IDENTIFICATION_PROMPT | self.llm | JsonOutputParser()
 
@@ -83,6 +69,8 @@ class WebAgent(BaseModel):
         QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._create_template(template_name="Query_web_scrape_classification")
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
 
+        self.logger.logger.info("Web Agent Tools and templates loaded")
+        
     def _create_template(self,template_name:str) -> PromptTemplate:
         try:
             self.logger.logger.debug("Loading template")
@@ -103,18 +91,10 @@ class WebAgent(BaseModel):
         # Instantiate the tools
         custom_search_tool = CustomSearchTool()
         webscrapper_tool = WebscrapperTool(llm=self.llm)
-        generate_code_tool = CodeGeneratorTool(llm=self.llm)
-        code_review_tool = CodeReviewTool(llm=self.llm)
-        code_corrector_tool = CodeCorrectorTool(llm=self.llm)
-        diagram_creator_tool = CodeDiagramCreator(llm=self.llm)
 
         tools = {
             "web_search": custom_search_tool,
             "web_scrapper": webscrapper_tool,
-            "code_generator": generate_code_tool,
-            "code_critique": code_review_tool,
-            "code_corrector": code_corrector_tool,
-            "diagram_creator": diagram_creator_tool
         }
         return tools
     
@@ -408,12 +388,12 @@ class WebAgent(BaseModel):
     
     def initialize_agent(self):
         """Initialize the agent with LangGraph."""
-        self.logger.logger.info("Initializing agent workflow")
+        self.logger.logger.info("Initializing WebAgent workflow")
         # Create the graph
         graph = self.create_graph()
         
         # Compile the graph
-        self.logger.logger.info("Compiling agent workflow graph")
+        self.logger.logger.info("Compiling WebAgent workflow graph")
         executor = graph.compile()
         
         return executor
@@ -435,5 +415,5 @@ class WebAgent(BaseModel):
             }
         except Exception as e:
             self.logger.log_error("agent_run", e)
-            self.logger.logger.error(f"Agent run failed: {str(e)}")
-            return f"Error running agent: {str(e)}"
+            self.logger.logger.error(f"WebAgent run failed: {str(e)}")
+            return f"Error running WebAgent: {str(e)}"
