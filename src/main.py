@@ -2,7 +2,7 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-# THen the meta agent and then codeagent and finally pdf agent:Add the pdf file use case with one either a link towards the read pdf or towards the an online pdf 
+# finally pdf agent:Add the pdf file use case with one either a link towards the read pdf or towards the an online pdf 
 # Test entier process altogether
 # Add The llm handler to the app and test 
 

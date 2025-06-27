@@ -137,11 +137,13 @@ Solution: Install PyTorch with one version lower than your current NVIDIA CUDA v
 
 Example: If you have CUDA 12.2, install PyTorch for CUDA 12.1
 
-### DuckDuckGo search
+### DuckDuckGo search to Tavily API
 It's preferable to install this version of duckduckgo_search==6.3.5, if the latest version lauches the following error : `duckduckgo_search.exceptions.RatelimitException: https://duckduckgo.com/ 202 Ratelimit` 
 
 Thus run the following command to install duckduckgo : ``pip3 install -U duckduckgo_search==6.3.5``
 Solution found : https://github.com/open-webui/open-webui/discussions/6624 
+
+Due to persistent rate limit issues and the unreliability of DuckDuckGo for more robust search requirements, I transitioned to the [Tavily Search API] https://docs.tavily.com/documentation/api-reference/endpoint/search for a more scalable and consistent solution. To integrate Tavily with LangChain, follow this guide: : https://python.langchain.com/docs/integrations/tools/tavily_search/ 
 
 ### NLTK Tokenizers
 The application requires specific NLTK tokenizers for text processing. We've included a function that automatically checks for and installs required tokenizers if they're missing.
@@ -159,3 +161,8 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 4. Improvements linked to constrained environments. 
 5. Possibly adding docker support 
 6. Possibility of adding the configuration to interact with google applications especially for code like a sandbox application where we could run a test file.  
+7. Modular Coding Agent Architecture : To improve the structure and performance of the coding agent, consider dividing it into three specialized sub-agents, each with a distinct responsibility:
+
+    - Research Agent: This agent is responsible for researching the problem domain. It can also explore and analyze the folder and file structure to gather relevant context before any coding begins.
+    - Coder Agent: This agent plans and writes the code based on the insights provided by the research agent. It defines the overall architecture, selects tools or libraries, and implements the solution.
+    - Reviewer Agent: This agent reviews and executes the code in a controlled, sandboxed environment. It captures errors, evaluates output, and provides structured feedback to improve the implementation iteratively.

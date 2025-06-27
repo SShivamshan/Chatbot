@@ -8,7 +8,11 @@ from models.Model import Chatbot
 from src.utils import *
 from src.AgentLogger import AgentLogger
 from models.WebAgent import WebAgent
+from models.KBAgent import KBAgent
+from models.CodeAgent import CodeAgent
 
+# Solutions adpated from: https://langchain-ai.github.io/langgraph/concepts/multi_agent/#handoffs-as-tools , 
+# https://blog.futuresmart.ai/multi-agent-system-with-langgraph 
 class GraphState(TypedDict):
     query: str
     agent_route: Optional[List[str]]
@@ -66,9 +70,12 @@ class SupervisorAgent(BaseModel):
     def initialize_sub_agents(self):
         self.logger.logger.debug("Initializing sub agents")
         webagent_tool = WebAgent(chatbot=self.llm)
-        return {"WebAgent": webagent_tool}
+        kbagent_tool = KBAgent(chatbot=self.llm)
+        codeagent_tool = CodeAgent(Chatbot=self.llm)
+        return {"WebAgent": webagent_tool,"KBAgent":kbagent_tool,"CodeAgent":codeagent_tool}
 
     def create_graph(self):
+        """Create a workflow for Supervisor agent operations."""
         self.logger.logger.info("Creating SupervisorAgent workflow graph")
         workflow = StateGraph(GraphState)
         logger = self.logger
@@ -99,10 +106,6 @@ class SupervisorAgent(BaseModel):
 
                 if route in self.tools:
                     logger.log_tool_call(route, {"query": state.get("query", "")})
-
-                    # You can add custom behavior per agent here
-                    if route == "KBAgent":
-                        pass  # Custom logic if needed
 
                     result = self.tools[route].run(state["query"])
                     subagent_results[route] = result

@@ -121,7 +121,7 @@ class WebAgent(BaseModel):
         return formatted_text.strip()
     
     def create_graph(self):
-        """Create a LangGraph workflow for agent operations."""
+        """Create a workflow for Code agent operations."""
         self.logger.logger.info("Creating WebAgent workflow graph")
         workflow = StateGraph(GraphState)
         logger = self.logger

@@ -67,6 +67,18 @@ class KBAgent(BaseModel):
             self.logger.log_error(f"_create_template({template_name})", e)
             raise ValueError(f"Failed to initialize template: {template_name}")
     
+    def format_knowledge(self,content):
+        self.logger.logger.debug("Formatting knowledge content")
+
+        formatted_text = "\n\n".join(
+            [
+                f"Title: {title}\n {contents}"
+                for title,contents in zip(content["title"],content["answer"])
+            ]
+        )
+
+        return formatted_text.strip()
+
     def create_graph(self):
         """Create a LangGraph workflow for agent operations."""
         self.logger.logger.info("Creating Knowledge Base Agent workflow graph")
@@ -92,9 +104,16 @@ class KBAgent(BaseModel):
             node_start_time = logger.log_node_entry(node_name, state)
 
             result = self.knowledge_result.invoke({"query": state["query"],"domain":state["domain"],"subdomain":state["subdomain"]})
+            
+            formatted_response = self.format_knowledge(result)
+            sources = [
+                {"title": title, "url": url}
+                for title,url in zip(result["title"],result["url"])
+            ]
             updated_state = {
                 **state,
-                "final_answer":result.get("answer","")
+                "final_answer":formatted_response,
+                "sources":sources
             }
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
@@ -133,7 +152,8 @@ class KBAgent(BaseModel):
 
             self.logger.end_agent_run(result)
             return {
-                "answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated.")
+                "answer": result.get("final_answer", "No answer generated."),
+                "sources": result.get("sources",[])
             }
         except Exception as e:
             self.logger.log_error("agent_run", e)

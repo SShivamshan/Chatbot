@@ -449,30 +449,35 @@ Agent_templates:
         }
 
 # ==================================================================================== Code Agent template ==================================================================================== #
-    Code_research_template:
-      name: Code_research_template
+    Code_query_identification_template: # Example of few shot template
+      name: Code_query_identification_template
       template: |
         <|begin_of_text|>
+
         <|start_header_id|>system<|end_header_id|>
 
-        You are a specialized AI assistant tasked with identifying whether the user's query requests code generation, correction, critique, or diagram generation. Analyze the query carefully to determine the user's intent.
-
-        Your task is to output a structured JSON response with the following fields:
-        - `"action_type"`: Must be one of `"generate"`, `"correct"`, `"critique"`, or `"diagram"`.
-
-        **Classification Rules:**
-        - If the user is requesting brand-new code or implementation, classify as `"generate"`.
-        - If the user is asking to fix, debug, or improve existing code, classify as `"correct"`.
-        - If the user is asking for feedback, critique, or analysis of code or its related diagrams, classify as `"critique"`.
-        - If the user is requesting a **diagram** (e.g., class diagram, flowchart, sequence diagram) based on provided code, classify as `"diagram"`.
-
+        Classify the following query. Respond ONLY with JSON.
+  
+        Examples:
+        Query: "Write a Python function to sort a list"
+        Response: {{"action_type": "generate"}}
+        
+        Query: "Fix this buggy code: def foo():"  
+        Response: {{"action_type": "correct"}}
+        
+        Query: "Review my algorithm implementation"
+        Response: {{"action_type": "critique"}}
+        
+        Query: "Create a flowchart for this function"
+        Response: {{"action_type": "diagram"}}
+        
         <|start_header_id|>user<|end_header_id|>
-        {query}
+        Now classify: {query}
 
         <|start_header_id|>assistant<|end_header_id|>
         ```json
         {{
-            "action_type": "generate" | "correct" | "diagram" | "critique"
+          "action_type": string
         }}
         ```
         <|eot_id|>
@@ -500,91 +505,125 @@ Agent_templates:
       name: Code_generation_list_template
       template: |
         <|begin_of_text|>
+
         <|start_header_id|>system<|end_header_id|>
-        You are a specialized AI assistant tasked with analyzing code generation requirements and producing a detailed implementation plan. Your output will directly guide another AI system in writing production-quality code.
 
-        ## PRIMARY OBJECTIVE
-        Create a comprehensive, step-by-step implementation plan for the given programming task that balances high-level architecture with concrete implementation details of low-level details.
-
+        You are a specialized AI assistant that creates implementation plans for code generation. 
+        
+        CRITICAL: You must ONLY return a JSON response with implementation steps. Do NOT generate actual code.
+        
+        Your task is to analyze programming requirements and produce a detailed step-by-step implementation plan that guides code generation.
+        
         ## ANALYSIS PROCESS
-        1. First, analyze the query to identify:
-          - Core functionality requirements
-          - Technical constraints
-          - Potential complexity challenges
-          - Appropriate programming paradigms
-
-        2. Then, structure your response as a sequential development roadmap that a developer could follow to implement the solution from scratch.
-
-        ## IMPLEMENTATION PLAN REQUIREMENTS
-        Your implementation steps MUST include:
-
-        - **Architecture Components**: Identify specific modules, classes, or functions needed
-        - **Data Structures**: Specify exact data structures with justification (e.g., "Use a priority queue for task scheduling to achieve O(log n) insertion")
-        - **Algorithms**: Name specific algorithms with complexity analysis (e.g., "Implement A* search algorithm with Manhattan distance heuristic")
-        - **Function Signatures**: Provide concrete function signatures with parameter types and return values
-        - **Error Handling**: Specify exception handling strategies for anticipated failure modes
-        - **Edge Cases**: Identify potential edge cases and their handling approach
-        - **Testing Strategy**: Outline unit/integration tests focusing on critical components
-        - **Performance Considerations**: Note time/space complexity tradeoffs and optimization opportunities
-        - **Language-Specific Practices**: Adhere to language-specific conventions (e.g., PEP 8 for Python)
-
-        **Query to analyze:** {query}  
-
-        ## RESPONSE FORMAT
-        Return ONLY a JSON object with the following structure:
+        1. Identify core functionality requirements and technical constraints
+        2. Structure response as a sequential development roadmap
+        3. Include architecture, data structures, algorithms, and implementation details
+        4. Define as many steps necessary to ensure a correct implementation. 
+        
+        ## REQUIRED ELEMENTS IN STEPS
+        - Architecture components (modules, classes, functions)
+        - Data structures with justification
+        - Algorithms with complexity analysis
+        - Function signatures with types
+        - Error handling strategies
+        - Edge cases and testing approaches
+        - Performance considerations
+        - Language-specific best practices
+        - Modular design: Group related classes, functions, and logic into appropriately named files/modules
+        - File structure breakdown: Specify which components go into which files
+        
+        ## FEW-SHOT EXAMPLES
+        
+        **Example 1:**
+        Query: "Create a simple calculator in Python"
+        Response:
         ```json
         {{
           "steps": [
-            "Step 1 description with concrete implementation details",
-            "Step 2 description with concrete implementation details",
-            "..."
+            "Create file structure: calculator/ with modules: core.py (Calculator class), utils.py (validation, display), cli.py (main loop), tests/test_core.py (unit tests)",
+            "In core.py, define class Calculator with __init__(self) to initialize operation history using collections.deque with maxlen=10 for bounded memory usage",
+            "Implement arithmetic methods in Calculator class with signatures: add(self, a: float, b: float) -> float, subtract(...), etc., each handling float precision and ZeroDivisionError for divide",
+            "In utils.py, implement validate_number(value: Any) -> float to cast and raise TypeError for invalid inputs; add display_result(result: float) -> str to format output to 2 decimal places or scientific notation",
+            "Add to core.py a method log_operation(self, op: str, a: float, b: float, result: float) to store tuples in history: (op, a, b, result)",
+            "In cli.py, create main() with a command-line interface loop using input(), try-except for ValueError and TypeError, and option to view history or exit cleanly",
+            "Include unit tests in tests/test_core.py using pytest to cover all arithmetic functions, input validation, and edge cases (e.g., division by zero, large/small numbers)",
+            "Use Python type hints throughout for clarity; follow PEP8 naming conventions and use __name__ == '__main__' guard in cli.py for script entry",
+            "Add logging configuration to cli.py to log errors and session events to calculator/logs/app.log",
+            "Optimize memory use by keeping operation history fixed-size and reusing result formatting"
           ]
         }}
         ```
-
-        **Example Output Format:**  
-        - **For a query like: ** "Create a web scraper in Python that extracts product information from an e-commerce site and stores it in a database" 
-
-        **Return:**
+        
+        **Example 2:**
+        Query: "Build a file organizer script"
+        Response:
         ```json
         {{
           "steps": [
-              "Define the project structure: Create a modular architecture with main.py as entry point, scraper.py for web scraping logic, database.py for database operations, models.py for data models, and config.py for configuration. Follow Python package structure with __init__.py files.",
-              "Create a configuration system: Implement a Config class in config.py that loads environment variables from a .env file using python-dotenv with fallback default values. Include TARGET_URL, DB_CONNECTION_STRING, REQUEST_TIMEOUT, and USER_AGENT settings.",
-              "Design the data model: Create a Product class in models.py using SQLAlchemy's declarative base with fields: id (Integer, primary_key), name (String(255), not_null), price (Numeric(10,2)), description (Text), url (String(500)), image_url (String(500)), and created_at (DateTime, default=now).",
-              "Implement database connection: Create a Database class in database.py using SQLAlchemy's create_engine with connection pooling (pool_size=5, max_overflow=10). Include methods: connect(), create_tables(), session_factory(), and close().",
-              "Build the web scraper core: Implement a Scraper class in scraper.py with methods: __init__(config), fetch_page(url) with exponential backoff retry logic, parse_product_listings(html) to extract product URLs, and parse_product_details(html) to extract structured product data using CSS selectors.",
-              "Implement rate limiting and politeness: Add a RequestThrottler class that ensures requests are spaced by at least 1-2 seconds using time.sleep() and tracks request count to respect robots.txt limitations.",
-              "Add error handling: Implement try-except blocks for network errors (requests.exceptions.RequestException), parsing errors (bs4.FeatureNotFound), and database errors (sqlalchemy.exc.SQLAlchemyError). Log errors using Python's logging module at appropriate severity levels.",
-              "Create the main execution flow: In main.py, implement a script that initializes the config, sets up logging, connects to the database, creates tables if needed, initializes the scraper, fetches and processes product listings, then extracts and stores detailed product information.",
-              "Add command-line interface: Use argparse to create CLI options for start_url, max_products, and database_path, with sensible defaults and help text.",
-              "Implement data validation: Add a validate_product_data(product_dict) function that checks required fields are present and have expected types/formats before database insertion.",
-              "Add unit tests: Create tests/ directory with test modules for each component using pytest. Include mock responses for web requests and a test database fixture using SQLite in-memory database."
-            ]
+            "Create modular structure: file_organizer/ with files: organizer.py (main class), categorizer.py (mapping and logic), file_ops.py (move, scan), cli.py (entry point), config.py (constants), tests/",
+            "In config.py, define EXTENSION_MAP: Dict[str, str] for file type categories like images, documents, videos; use Path objects for cross-platform support",
+            "In organizer.py, define class FileOrganizer with __init__(self, source_dir: Path, target_dir: Path), store normalized absolute paths",
+            "Implement scan_directory(self) -> List[Path] using os.walk() or Path.rglob() for recursion and file size metadata collection",
+            "In categorizer.py, define categorize_file(file_path: Path) -> str returning category name or 'misc'; handle case-insensitive extensions",
+            "In file_ops.py, implement move_file(src: Path, dst: Path) with duplicate name resolution via timestamping and exception handling for OSError and PermissionError",
+            "In organizer.py, add create_directory_structure(self) to ensure category folders exist using os.makedirs(exist_ok=True)",
+            "In cli.py, build an argparse-based CLI with options: --source, --target, --dry-run; show preview if dry-run is enabled",
+            "Add logging (file and console) to organizer.py using logging module with rotating file handler; log moved files and errors",
+            "Include tests using pytest for categorize_file, move_file, scan_directory; mock file system with tmp_path fixture to test file operations safely",
+            "Ensure robust error handling for missing permissions, full disk, nonexistent paths; exit gracefully with appropriate messages",
+            "Optimize with lazy scanning (generators) and avoid unnecessary disk I/O for preview mode"
+          ]
         }}
         ```
-        <|eot_id|>
-        <|end_of_text|>
-
-        <|start_header_id|>assistant<|end_header_id|>
+        
+        **Example 3:**
+        Query: "Create a web scraper for product information"
+        Response:
+        ```json
+        {{
+          "steps": [
+            "Organize code into modular files: main.py (entry), scraper.py (logic), database.py (ORM), models.py (data classes), config.py (env), validator.py (data checks), tests/",
+            "In config.py, define Configuration class using dataclasses with fields like TARGET_URL, REQUEST_TIMEOUT: int, DB_URI: str, USER_AGENT: str; load from os.environ with defaults",
+            "In models.py, define Product dataclass with fields: id: int, name: str, price: Decimal, description: str, url: str, scraped_at: datetime; include __post_init__() for validation",
+            "In database.py, implement Database class with SQLAlchemy’s create_engine(), scoped_session, and context manager for DBSession; use PostgreSQL/SQLite as backend",
+            "In scraper.py, define WebScraper class with init(session: requests.Session), and method scrape_products(self, url: str) -> List[Product]",
+            "Use requests.Session with retry strategy via HTTPAdapter; implement rate limiting using time.sleep() and backoff for 429/5xx status codes",
+            "Use BeautifulSoup4 with CSS selectors for extraction; include try-except for parsing errors; return parsed Product objects from page",
+            "In validator.py, add validate_product_data(product: Product) -> bool and helper functions for checking price formats (regex), URL structure, and field presence",
+            "main.py should initialize config, scraper, database; log start/stop using rotating file handler; store scraped results via DBSession and handle KeyboardInterrupt for clean shutdown",
+            "Write unit tests in tests/ using pytest, responses or httpx_mock for mocking HTTP, and in-memory SQLite for DB tests; include edge cases: empty page, malformed HTML, bad data types",
+            "Add logging in scraper and database for request URLs, DB inserts, errors; separate error and info log files for better observability",
+            "Ensure performance by reusing HTTP session, minimizing redundant DB writes (check existing URLs), and parallelizing scrape if needed (optional)"
+          ]
+        }}
+        ```
+        
+        Now analyze this query and return ONLY the JSON response format:
+        
+        **Query to analyze:** {query}
 
       input_variables:
         - name: query
-          description: The query or task description requiring code generation.
+          description: The programming task to create implementation steps for
           is_required: true
 
       output_parser:
         type: "json"
-        schema: 
-          type: "object"
-          properties:
-            steps:
-              type: "array"
-              items:
-                type: "string"
-              description: "A sequential list of steps to guide code generation, maintaining high-level clarity with some essential low-level details."
-          required: ["steps"]
+        schema: {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["steps"]
+        }
 
+# ==================================================================================== Code Agent tools ==================================================================================== #
     Code_generator_template:
       name: Code_generator_template
       template: |
@@ -628,7 +667,7 @@ Agent_templates:
 
         5. **Testing**:
           - Implement unit tests that cover:
-            * Core functionality (happy path)
+            * Core functionality
             * Edge cases identified in the implementation plan
             * Error handling paths
           - Group tests logically by functionality
@@ -643,22 +682,11 @@ Agent_templates:
         * Followed all language-specific conventions and best practices
         * Optimized performance-critical sections as specified
 
-        <|start_header_id|>user<|end_header_id|>
-        **Task:** {query}
-
-        **Implementation Steps:**
-        {steps_text}
-
-        ## EXAMPLES
+        ## FEW-SHOT EXAMPLES
         ## Example 1 : Implementing a simple sorting algorithm
-        **Query:** Implement a bubble sort algorithm in Python.
-
-        **Implementation Steps:**
-        1. Initialize an array with given elements
-        2. Iterate through the array from the first element to the second-to-last element
-        3. Compare each pair of adjacent elements
-        4. Swap the elements if they are in the wrong order
-        5. Repeat steps 3-4 until the entire array is sorted
+        **Task:** Implement a bubble sort algorithm in Python.
+        **Steps** : [Initialize an array with given elements,Iterate through the array from the first element to the second-to-last element,
+        Compare each pair of adjacent elements,Swap the elements if they are in the wrong order,Repeat steps 3-4 until the entire array is sorted]
 
         **Output Format:**
         ```python
@@ -671,14 +699,9 @@ Agent_templates:
             return arr
         ```
         ## Example 2 : Implementing a simple sorting algorithm in C++
-        **Query:** Implement a bubble sort algorithm in C++.
-
-        **Implementation Steps:**
-        1. Initialize an array with given elements
-        2. Iterate through the array from the first element to the second-to-last element
-        3. Compare each pair of adjacent elements
-        4. Swap the elements if they are in the wrong order
-        5. Repeat steps 3-4 until the entire array is sorted
+        **Task:** Implement a bubble sort algorithm in C++.
+        **Steps** : [Initialize an array with given elements,Iterate through the array from the first element to the second-to-last element,
+                    Compare each pair of adjacent elements,Swap the elements if they are in the wrong order,Repeat steps 3-4 until the entire array is sorted]
 
         **Output Format:**
         ```cpp 
@@ -725,11 +748,21 @@ Agent_templates:
 
             return 0;  // Indicate successful execution
         }}
-        ``` 
-        <|eot_id|>
-        <|end_of_text|>
+        ```
+        <|start_header_id|>user<|end_header_id|>
+        Now implement the code for the following task:
+
+        **Task:** {query}
+
+        **Implementation Steps:**
+        {steps_text}
+
+        Provide complete, working code that implements ALL the specified steps with proper documentation, error handling, and tests.
 
         <|start_header_id|>assistant<|end_header_id|>
+
+        <|eot_id|>
+        <|end_of_text|>
 
       input_variables:
         - name: query
@@ -738,19 +771,6 @@ Agent_templates:
         - name: steps_text
           description: A list of detailed implementation steps.
           is_required: true
-      
-      # output_parser:
-      #   type: "json"
-      #   schema: {
-      #     type: "object",
-      #     "properties": {
-      #       "code": {
-      #         "type": "string",
-      #         "description": "The complete code implementation following all specified steps and requirements."
-      #       }
-      #     },
-      #     "required": ["code"]
-      #   }
 
     Code_correction_template:
       name: Code_correction_template
@@ -817,12 +837,7 @@ Agent_templates:
         - **Edge Case Handling**: Ensure proper handling of boundary conditions, user inputs, and failure scenarios.
         - **Modularity & Scalability**: Evaluate function/class design, reusability, and adaptability for future growth.
 
-        You should not return any corrected code or documentation. 
-        <|start_header_id|>user<|end_header_id|>
-        **Code to Review:**
-        ```
-        {code}
-        ```
+        You should not return any corrected code or documentation.
         
         **Instructions:**
         - Assign each feedback point a severity level (Critical, Major, Minor)
@@ -861,13 +876,16 @@ Agent_templates:
           "is_valid": true/false
         }}
         ```
-
-        
-        <|eot_id|>
-
-        <|end_of_text|>
+        <|start_header_id|>user<|end_header_id|>
+        **Code to Review:**
+        ```
+        {code}
+        ```
 
         <|start_header_id|>assistant<|end_header_id|>
+
+        <|eot_id|>
+        <|end_of_text|>
 
       input_variables:
         - name: code
@@ -1047,11 +1065,13 @@ Agent_templates:
         <|start_header_id|>system<|end_header_id|>
 
         You are an expert in the field of **{domain}**, with specialized knowledge in **{subdomain}**. Your task is to answer the following user query clearly and accurately. 
-        Only return a JSON object with the following structure:
+        Return only a JSON object with the following structure:
+        - **answer**: A concise and informative response to the query. Summarize each linked article in 2-5 sentences to explain how it relates to the query.
+        - **title**: A title for the each linked article. 
+        - **url**: A list of URLs relevant to the response.
 
-        - **answer**: A concise and informative response to the query.
+        Respond only with a valid JSON object. Do not include any explanations or formatting outside of the JSON.
 
-        Respond **only with a valid JSON object**, and do not include any explanations or formatting outside of the JSON.
 
         <|start_header_id|>user<|end_header_id|>
         {query}
@@ -1059,7 +1079,9 @@ Agent_templates:
         <|start_header_id|>assistant<|end_header_id|>
         ```json
         {{
-        "answer":str
+        "answer":string[],
+        "title":string[],
+        "url": string[]
         }}
         ```
         <|eot_id|>
@@ -1082,8 +1104,23 @@ Agent_templates:
           "type": "object",
           "properties": {
             "answer": {
-              "type": "string"
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
+            "title":{
+              type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "url": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["answer"]
+          "required": ["answer","url"]
         }
