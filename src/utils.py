@@ -4,11 +4,10 @@ import re
 import logging
 import uuid
 import json
-import pytz
 import hashlib
 import requests
 import textwrap
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union,Literal
 from io import BytesIO
 import tempfile
 from typing import Any
@@ -17,6 +16,7 @@ from collections import defaultdict
 from datetime import datetime
 from collections import Counter
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Third-party library imports
 import yaml
@@ -45,6 +45,7 @@ from langchain_tavily import TavilySearch
 from unstructured.partition.pdf import partition_pdf
 from unstructured.partition.html import partition_html
 from unstructured.documents.elements import CompositeElement,Element
+from unstructured.chunking.title import chunk_by_title
 
 # Local imports
 from models.Model import Chatbot
@@ -146,6 +147,42 @@ def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434
         logger.error(f"Error unloading model: {e}")
     except Exception as e:
         logger.exception(f"Unexpected error: {e}")
+
+
+def load_ai_template(config_path: str) -> Dict:
+    """
+    Load the template present in the config.yaml file
+
+    params
+    ------
+        - template_name (str): Name of the template to be loaded
+
+    returns
+    -------
+        Dict: Template configuration loaded from the config.yaml file
+
+    """
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    return config
+
+
+def get_file_hash(file:str) -> str:
+    """
+    Create the hash for a given file  
+    
+    params
+    ------
+        - file (str): Path of the given file
+
+    returns
+    -------
+        str: Hash of the given file
+    """
+    file.seek(0)
+    file_hash = hashlib.md5(file.read()).hexdigest()
+    file.seek(0)
+    return file_hash
 
 class LineListOutputParser(BaseOutputParser[List[str]]):
     """Output parser for a list of lines."""
@@ -677,7 +714,7 @@ class CodeDiagramCreator(BaseTool):
         super().__init__()
         self.llm = llm
     
-    def _run(self, query: str) -> PromptTemplate:
+    def _run(self, query: str):
         """
         Generates a diagram from a given code snippet.
         """
@@ -723,13 +760,32 @@ class PDFTools(BaseTool):
     name: str = "pdf_tools"
     description: str = "Performs various operations on PDF files such as reading and retrieving pdf contents."
     llm: Optional[Chatbot] = Field(default=None, exclude=True)
-
+    pdf_state:str = Field(default=None,exclude=True)
     class Config:
         arbitrary_types_allowed = True
 
     def __init__(self, llm: Chatbot):
         super().__init__()
         self.llm = llm
+        self.pdf_state = "online" # Defines if the pdf is an online file or an uploaded file
+
+    def _run(self, query: str, state:bool):
+        """
+        Analyses the pdf and runs the query on it
+        """
+        if not state:
+            self.pdf_state = "offline"
+
+        
+    
+    def _arun(self, query: str):
+        """
+        This tool does not support asynchronous execution.
+        """
+        raise NotImplementedError("This tool does not support async")
+
+
+#================================================================ Other functions ================================================================#
 
 def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     """
@@ -941,44 +997,6 @@ class Vectordb:
             self.logger.error(f"Error searching for context: {e}")
             return None
 
-
-
-def load_ai_template(config_path: str) -> Dict:
-    """
-    Load the template present in the config.yaml file
-
-    params
-    ------
-        - template_name (str): Name of the template to be loaded
-
-    returns
-    -------
-        Dict: Template configuration loaded from the config.yaml file
-
-    """
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
-
-
-def get_file_hash(file:str) -> str:
-    """
-    Create the hash for a given file  
-    
-    params
-    ------
-        - file (str): Path of the given file
-
-    returns
-    -------
-        str: Hash of the given file
-    """
-    file.seek(0)
-    file_hash = hashlib.md5(file.read()).hexdigest()
-    file.seek(0)
-    return file_hash
-
-
 class PDF_Reader:
     _instance = None
     def __new__(cls):
@@ -1044,6 +1062,89 @@ class PDF_Reader:
             self.logger.error("Failed to partition PDF file %s", e)
             return None
         
+    def read_pdf_online(self, url: str):
+        """
+        Reads a pdf online from a given url.
+        Handles direct PDF links, MDPI pages, and ResearchGate pages.
+        """
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        }
+        # First verify if the url is a pdf or webpage
+        if url.endswith(".pdf"):
+            try:
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    tmp_file.write(response.content)
+                    tmp_path = tmp_file.name
+                
+                # Extract with unstructured
+                elements = partition_pdf(
+                    filename=tmp_path,
+                    infer_table_structure=True,            # extract tables
+                    strategy="hi_res",                     # mandatory to infer tables
+
+                    extract_image_block_types=["Image", "Table"],   
+                    extract_image_block_to_payload=True,   # if true, will extract base64 for API usage   
+                    max_characters=10000,                  
+                    combine_text_under_n_chars=2000,       
+                    new_after_n_chars=6000,
+                )
+                
+                chunks = chunk_by_title(elements)
+                filename = self.get_pdf_title(chunks)
+                for element in chunks:
+                    element.metadata.filename = filename
+                    
+                os.unlink(tmp_path)
+                return chunks
+                
+            except Exception as e:
+                print(f"Error processing direct PDF: {e}")
+                return None
+        
+        else:
+            # Handle webpage formats (MDPI,) probably add also research gate but having access error 404 forbidden url problems: 
+            # Solution for such can be resolved using this : https://stackoverflow.com/questions/72347165/python-requests-403-forbidden-error-while-downlaoding-pdf-file-from-www-resear 
+            try:
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "lxml")
+
+                main_content = None
+                if soup.find("main"):
+                    main_content = soup.find("main")
+                elif soup.find("article"):
+                    main_content = soup.find("article")
+                elif soup.find("div", {"id": "content"}):
+                    main_content = soup.find("div", {"id": "content"})
+                elif soup.find("div", {"id": "main-content"}):
+                    main_content = soup.find("div", {"id": "main-content"})
+                else:
+                    # Fallback: take the largest <div> with the most text
+                    main_content = max(soup.find_all("div"), key=lambda div: len(div.text), default=soup)
+
+                # Remove unwanted elements (e.g., navigation, footer, ads)
+                for tag in main_content.find_all(["header", "footer", "nav", "aside", "script", "style"]):
+                    tag.extract()
+                
+                cleaned_html = str(main_content)
+                
+                filename = main_content.h1.text if main_content.h1 else "default_filename"
+                filename = ' '.join(filename.split())
+                
+                elements = partition_html(text=cleaned_html)
+                chunks = chunk_by_title(elements)
+                for element in chunks:
+                    element.metadata.filename = filename
+                
+                return chunks
+            except Exception as e:
+                print(f"Error processing webpage: {e}")
+                return None
+    
     def view_pdf_image(self,base_string:str):
         try:
             if self.is_image_data(base_string):
@@ -1052,6 +1153,7 @@ class PDF_Reader:
                 image.show()
         except Exception as e:
             self.logger.error("Failed to view PDF image %s", e)
+
     @staticmethod
     def base64_to_image(base64_string:str):
         # Remove the data URI prefix if present
@@ -1061,6 +1163,7 @@ class PDF_Reader:
         # Decode the Base64 string into bytes
         image_bytes = base64.b64decode(base64_string)
         return image_bytes
+    
     @staticmethod
     def create_image_from_bytes(image_bytes:bytes):
         # Create a BytesIO object to handle the image data
@@ -1069,6 +1172,7 @@ class PDF_Reader:
         # Open the image using Pillow (PIL)
         image = Image.open(image_stream)
         return image
+    
     @staticmethod
     def is_image_data(b64data): # Solution : https://github.com/langchain-ai/langchain/blob/master/cookbook/Multi_modal_RAG.ipynb 
         """
@@ -1099,14 +1203,14 @@ class PDF_Reader:
 
         images_b64 = []
         for chunk in chunks:
-            if "CompositeElement" in str(type(chunk)):
-                chunk_els = chunk.metadata.orig_elements
-                for el in chunk_els:
-                    if "Image" in str(type(el)):
-                        images_b64.append(el.metadata.image_base64)
-                for el in chunk_els:
-                    if "Table" in str(type(el)):
-                        tables.append(el.metadata.text_as_html)
+            # if "CompositeElement" in str(type(chunk)):
+            chunk_els = chunk.metadata.orig_elements
+            for el in chunk_els:
+                if "Image" in str(type(el)):
+                    images_b64.append(el.metadata.image_base64)
+            for el in chunk_els:
+                if "Table" in str(type(el)):
+                    tables.append(el.metadata.text_as_html)
         return texts,tables,images_b64
 
     def _get_summaries_table(self,tables:List[str], chatbot:Chatbot):
@@ -1161,10 +1265,23 @@ class PDF_Reader:
             self.logger.error("Failed to get summaries for images %s", e)
             return []
     
-    @staticmethod
-    def get_pdf_title(chunk):
-        elements = chunk.metadata.orig_elements
-        chunk_title = [el for el in elements if 'Title' in str(type(el))]
+    def get_pdf_title(self, chunk:List[CompositeElement]):
+        """
+        Primarily used to retrieve the pdf title from an a pdf(online or offline based pdfs)
+        """
+        len_el = 0
+        if(len(chunk[len_el].text)>300):
+            element = chunk[len_el].metadata.orig_elements
+        else:
+            len_el = 1
+            element = chunk[len_el].metadata.orig_elements
+        chunk_title = [el for el in element if 'Title' in str(type(el))]
         chunk_title[0].to_dict()
-
-        return chunk_title[0].text
+        i = 0
+        if len(chunk_title) > 3:
+            i=2
+            return chunk_title[i].text
+        else:
+            return chunk_title[i].text
+         
+    

@@ -7,7 +7,9 @@ from models.Model import Chatbot
 from src.utils import *
 from src.AgentLogger import AgentLogger
 
-
+## PDF agent is an agent itself to go through vector databases(PDF) for releveant information
+## The pdf itself can be an uploaded file or could be just a link towards a url of a pdf format
+# Here we create a vectorstore and the docstore temporary
 
 class PDFAgent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -58,3 +60,7 @@ class PDFAgent(BaseModel):
         except Exception as e:
             self.logger.log_error(f"_create_template({template_name})", e)
             raise ValueError(f"Failed to initialize template: {template_name}")
+        
+
+    def initialize_tools(self):
+        self.logger.logger.debug("Initializing PDF Agent tools")
