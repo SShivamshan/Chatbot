@@ -1124,3 +1124,101 @@ Agent_templates:
           },
           "required": ["answer","url"]
         }
+
+# ==================================================================================== PDF Agent template ==================================================================================== #  
+
+    PDF_Agent_template:
+      name: "PDF_Agent_template"
+      template: | 
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert in identifying user queries to determine whether a URL is provided in the query or the user uploaded a PDF directly. This is indicated by the boolean value: `{{online}}`.
+
+        Return a JSON object with the following fields:
+        - **pdf_category**: one of the following values — `"online"`, `"offline"`, or `"both"`
+        - **url**: the URL provided in the query if any, otherwise `null`
+
+        ## Few-shot examples
+
+        ### Example 1:
+        **Query**: "Can you analyze this paper for me? https://arxiv.org/pdf/2106.14807.pdf"
+        **online**: true
+
+        **Output**:
+        ```json
+        {{
+          "pdf_category": "online",
+          "url": "https://arxiv.org/pdf/2106.14807.pdf"
+        }}
+        ```
+
+        ### Example 2:
+
+        **Query**: "Here's the PDF I just uploaded, please summarize it."
+        **online**: false
+
+        **Output**:
+        ```json
+        {{
+          "pdf_category": "offline",
+          "url": null
+        }}
+        ```
+
+        Example 3:
+
+        **Query**: "Check both this document https://example.com/paper.pdf and the one I uploaded."
+        **online**: true
+
+        **Output**:
+        ```json
+        {{
+          "pdf_category": "both",
+          "url": "https://example.com/paper.pdf"
+        }}
+        ```
+        <|start_header_id|>user<|end_header_id|>
+        **Query**: {query}
+        **Online**: {online}
+
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+        "pdf_category":string[],
+        "url":string,
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+
+      input_variables:
+        - name: query
+          description: The query given by the user
+          is_required: true
+        - name: online
+          description: Defines if the pdf is online or an offline type
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "pdf_category": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "url": {
+              "type": "string"
+            }
+            
+          },
+          "required": ["pdf_category","url"]
+        }
+
+        
+

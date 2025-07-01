@@ -4,6 +4,7 @@ import re
 import logging
 import uuid
 import json
+import sqlite3
 import hashlib
 import requests
 import textwrap
@@ -13,10 +14,7 @@ import tempfile
 from typing import Any
 import subprocess
 from collections import defaultdict
-from datetime import datetime
-from collections import Counter
 from dotenv import load_dotenv
-from urllib.parse import urlparse
 
 # Third-party library imports
 import yaml
@@ -101,6 +99,8 @@ def split_chuncks(text:List[CompositeElement],filename:str) -> List[Document]: #
     logging.info("File has been chunked with metadata: %i", len(doc_chunks))
     return doc_chunks,doc_ids
 
+## The primary problem with this approach is that it works quiet well for files that coming from
+## locally saved places but still won't work with online pdfs 
 def get_pdf_title(pdf_path) -> str:
     """
     Return the title of the pdf file
@@ -230,6 +230,52 @@ class CustomRetriever(BaseRetriever, BaseModel):
     
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         return self._get_relevant_documents(query)
+
+
+class TemporaryDB:
+    def __init__(self, use_memory: bool = True):
+        if use_memory:
+            self.conn = sqlite3.connect(':memory:')
+        else:
+            db_path = os.path.join(tempfile.gettempdir(), 'temp_image_db.sqlite')
+            self.conn = sqlite3.connect(db_path)
+
+        self.cursor = self.conn.cursor()
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_paths (
+                id TEXT PRIMARY KEY,
+                path TEXT UNIQUE
+            )
+        ''')
+        self.conn.commit()
+
+    def add(self, uid: str, path: str) -> bool:
+        """Adds (UUID, path) if not already present. Returns True if added, False if either exists."""
+        if self.exists_by_id(uid):
+            return False
+        self.cursor.execute("INSERT INTO saved_paths (id, path) VALUES (?, ?)", (uid, path))
+        self.conn.commit()
+        return True
+
+    def exists_by_id(self, uid: str) -> bool:
+        self.cursor.execute("SELECT 1 FROM saved_paths WHERE id = ?", (uid,))
+        return self.cursor.fetchone() is not None
+
+    def get_by_id(self, uid: str) -> str:
+        self.cursor.execute("SELECT path FROM saved_paths WHERE id = ?", (uid,))
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def get_all(self) -> list:
+        self.cursor.execute("SELECT id, path FROM saved_paths")
+        return self.cursor.fetchall()
+
+    def remove_by_id(self, uid: str):
+        self.cursor.execute("DELETE FROM saved_paths WHERE id = ?", (uid,))
+        self.conn.commit()
+
+    def __del__(self):
+        self.conn.close()
 
 #================================================================ Web srapping/search tools =================================================================# 
 class CustomSearchTool(BaseTool):
@@ -921,14 +967,16 @@ class Vectordb:
         if not cls._instance:
             cls._instance = super().__new__(cls)
         return cls._instance
-    def __init__(self) -> None:
+    
+    def __init__(self,NAME:str=None) -> None:
         if not hasattr(self, 'initialized'):
             self.embeddings = OllamaEmbeddings(model="nomic-embed-text:latest",
                                                 base_url="http://localhost:11434"  # Adjust the base URL as per your Ollama server configuration
                                             )
             self.client = chromadb.PersistentClient(path="database/")
-            self.collection = self.client.get_or_create_collection(name="knowledge_base",metadata={"hnsw:space": "cosine"})
-            self.vector_store = Chroma(client=self.client,collection_name="knowledge_base",embedding_function=self.embeddings)
+            
+            self.collection = self.client.get_or_create_collection(name="knowledge_base" if NAME is None else NAME,metadata={"hnsw:space": "cosine"})
+            self.vector_store = Chroma(client=self.client,collection_name="knowledge_base" if NAME is None else NAME,embedding_function=self.embeddings)
             self.initialized = True
             self.logger = self._setup_logging()
 
@@ -1055,6 +1103,10 @@ class PDF_Reader:
                 new_after_n_chars=6000,
 
             )
+            filename = self.get_pdf_title(chunks)
+            for element in chunks:
+                element.metadata.filename = filename
+
             os.remove(temp_filename)
             return chunks
 
@@ -1284,4 +1336,4 @@ class PDF_Reader:
         else:
             return chunk_title[i].text
          
-    
+   
