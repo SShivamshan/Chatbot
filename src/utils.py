@@ -198,84 +198,90 @@ def get_parent_id(element):
 # Solution : https://github.com/langchain-ai/langchain/issues/6046 , https://github.com/rajib76/langchain_examples/blob/main/examples/how_to_execute_retrievalqa_chain.py 
 class CustomRetriever(BaseRetriever, BaseModel):
     vectorstore: Optional[Any] = Field(default=None)
-    
+    docstore: Optional[Any] = Field(default=None)
+
     class Config:
         arbitrary_types_allowed = True
 
     def _get_relevant_documents(self, query: str) -> List[Document]:
         """
-        Retrieves the relevant documents with a associated scores for each document.
-
-        params
-        ------
-            - query (str): Query string to search for.
-
-        returns
-        -------
-            List[Tuple[Document, float]]: A list of tuples, each containing a Document and its corresponding score.
-        
+        Retrieves the top 5 relevant documents with scores.
+        If `docstore` is available, it enriches metadata with raw content (e.g., raw tables).
         """
-        # Perform the similarity search (retrieve more than 5 to ensure top 5 selection)
+        # Perform the similarity search with scores
         docs, scores = zip(*self.vectorstore.similarity_search_with_relevance_scores(query, k=10, score_threshold=0.19))
-        
-        # Pair documents with their scores
-        docs_with_scores = list(zip(docs, scores))
-        top_docs_with_scores = sorted(docs_with_scores, key=lambda x: x[1], reverse=True)[:5]
-    
-        for doc, score in top_docs_with_scores:
+
+        # Sort and pick top 5
+        docs_with_scores = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)[:5]
+
+        enriched_docs = []
+        for doc, score in docs_with_scores:
             doc.metadata["score"] = score
-        
-        # Return only the top 5 highest-scoring documents
-        return [doc for doc, _ in top_docs_with_scores]
-    
+
+            doc_id = doc.metadata.get("doc_id")
+            if doc_id and self.docstore:
+                data = self.docstore.mget([doc_id])[0]
+                if data:
+                    doc.metadata["data"] = data  # could be table, image_paths.
+
+            enriched_docs.append(doc)
+
+        return enriched_docs
+
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         return self._get_relevant_documents(query)
 
 
 class TemporaryDB:
-    def __init__(self, use_memory: bool = True):
+    def __init__(self, db_name: str = "default", use_memory: bool = True):
+        self.db_name = db_name
+
         if use_memory:
             self.conn = sqlite3.connect(':memory:')
         else:
-            db_path = os.path.join(tempfile.gettempdir(), 'temp_image_db.sqlite')
+            db_filename = f"temp_db_{self.db_name}.sqlite"
+            db_path = os.path.join(tempfile.gettempdir(), db_filename)
             self.conn = sqlite3.connect(db_path)
 
         self.cursor = self.conn.cursor()
         self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS saved_paths (
+            CREATE TABLE IF NOT EXISTS saved_values (
                 id TEXT PRIMARY KEY,
-                path TEXT UNIQUE
+                value TEXT
             )
         ''')
         self.conn.commit()
 
-    def add(self, uid: str, path: str) -> bool:
-        """Adds (UUID, path) if not already present. Returns True if added, False if either exists."""
+    def add(self, uid: str, value: str) -> bool:
+        """Adds (UUID, value) if not already present. Returns True if added, False if either exists."""
         if self.exists_by_id(uid):
             return False
-        self.cursor.execute("INSERT INTO saved_paths (id, path) VALUES (?, ?)", (uid, path))
+        self.cursor.execute("INSERT INTO saved_values (id, value) VALUES (?, ?)", (uid, value))
         self.conn.commit()
         return True
 
     def exists_by_id(self, uid: str) -> bool:
-        self.cursor.execute("SELECT 1 FROM saved_paths WHERE id = ?", (uid,))
+        self.cursor.execute("SELECT 1 FROM saved_values WHERE id = ?", (uid,))
         return self.cursor.fetchone() is not None
 
     def get_by_id(self, uid: str) -> str:
-        self.cursor.execute("SELECT path FROM saved_paths WHERE id = ?", (uid,))
+        self.cursor.execute("SELECT value FROM saved_values WHERE id = ?", (uid,))
         row = self.cursor.fetchone()
         return row[0] if row else None
 
     def get_all(self) -> list:
-        self.cursor.execute("SELECT id, path FROM saved_paths")
+        self.cursor.execute("SELECT id, value FROM saved_values")
         return self.cursor.fetchall()
 
     def remove_by_id(self, uid: str):
-        self.cursor.execute("DELETE FROM saved_paths WHERE id = ?", (uid,))
+        self.cursor.execute("DELETE FROM saved_values WHERE id = ?", (uid,))
         self.conn.commit()
 
     def __del__(self):
-        self.conn.close()
+        try:
+            self.conn.close()
+        except Exception:
+            pass
 
 #================================================================ Web srapping/search tools =================================================================# 
 class CustomSearchTool(BaseTool):
@@ -963,20 +969,30 @@ class ChromaDBEmbeddingFunction:
     
 class Vectordb:
     _instance = None
-    def __new__(cls):
+
+    def __new__(cls, *args, **kwargs):
         if not cls._instance:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
-    def __init__(self,NAME:str=None) -> None:
+
+    def __init__(self, NAME: str = None) -> None:
         if not hasattr(self, 'initialized'):
-            self.embeddings = OllamaEmbeddings(model="nomic-embed-text:latest",
-                                                base_url="http://localhost:11434"  # Adjust the base URL as per your Ollama server configuration
-                                            )
+            self.embeddings = OllamaEmbeddings(
+                model="nomic-embed-text:latest",
+                base_url="http://localhost:11434"
+            )
             self.client = chromadb.PersistentClient(path="database/")
-            
-            self.collection = self.client.get_or_create_collection(name="knowledge_base" if NAME is None else NAME,metadata={"hnsw:space": "cosine"})
-            self.vector_store = Chroma(client=self.client,collection_name="knowledge_base" if NAME is None else NAME,embedding_function=self.embeddings)
+
+            collection_name = "knowledge_base" if NAME is None else NAME
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+            self.vector_store = Chroma(
+                client=self.client,
+                collection_name=collection_name,
+                embedding_function=self.embeddings
+            )
             self.initialized = True
             self.logger = self._setup_logging()
 
