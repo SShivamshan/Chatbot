@@ -9,7 +9,6 @@ from threading import Thread
 from queue import Queue, Empty
 from typing import Callable
 from src.utils import *
-import sqlite3
 import tempfile
 import shutil
 from src.AgentLogger import AgentLogger
@@ -23,6 +22,7 @@ class GraphState(TypedDict):
     query: str
     final_answer: Optional[str]
     online: bool
+    answer_dict: Dict
     sources: Optional[List]
     pdf_url: Optional[str]
     pdf_category: str
@@ -40,12 +40,12 @@ class PDFAgent(BaseModel):
     uploaded_filename:str = Field(default="")
     offline_saved: bool = Field(default=False)
     online_saved: bool = Field(default=False)
-    # custom_retriever: Optional[CustomRetriever] = Field(default=None, exclude=True)
     docstore: Optional[Any] = Field(default=None, exclude=True)
-    # rag: Optional[Any] = Field(default=None,exclude=True)
     temp_dir: Optional[Any] = Field(default=None, exclude=True)
     last_offline_file: str = Field(default=None, exclude=True)
     last_online_url: str = Field(default=None, exclude=True)
+    graph_state: Optional[Any] = Field(default=None, exclude=True)
+    end_agent:bool = Field(default=True)
 
     def __init__(
         self,
@@ -54,13 +54,15 @@ class PDFAgent(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        end_agent : bool = True             # This is helpful if we wanted to use the agent as its or with another and will not print out the end statistic of the agent. 
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
+        self.end_agent = end_agent
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="PDF Agent")
-        self.logger.logger.info(f"Initializing CodeAgent with model: {model_name}")
+        self.logger.logger.info(f"Initializing PDFAgent with model: {model_name}")
 
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
@@ -77,9 +79,8 @@ class PDFAgent(BaseModel):
         self.last_online_url = None
         self.last_offline_file = None
         self.temp_dir = tempfile.mkdtemp()
-        # self.saved_paths = {}
-        # self.saved_tables = {}
         self.logger.logger.info("Code Agent LLM initialized")
+        self.graph_state = None
 
         # Initialize components
         self.tools = self.initialize_tools()
@@ -94,7 +95,7 @@ class PDFAgent(BaseModel):
                 if os.path.exists(self.temp_dir):
                     shutil.rmtree(self.temp_dir)
         except Exception as e:
-            pass  # Avoid throwing in destructor
+            pass  # Avoids throwing in destructor
     
     def _save_images(self, img_base64_list: List[str], filename: str, img_uids: List[float]) -> List[str]:
         """
@@ -172,10 +173,8 @@ class PDFAgent(BaseModel):
         chunks = []
         if mode == "offline":
             chunks = self.tools["pdf_reader"].read_pdf(file)
-            self.online_saved = True
         if mode == "online":
             chunks = self.tools["pdf_reader"].read_pdf_online(file)
-            self.offline_saved = True
             
         filename = chunks[0].metadata.filename
         texts,tables,images_64_list = self.tools["pdf_reader"].separate_elements(chunks)
@@ -228,8 +227,8 @@ class PDFAgent(BaseModel):
         def identify_pdf_format(state: GraphState) -> GraphState:
             node_name = "identify_query"
             node_start_time = logger.log_node_entry(node_name, state)
-
             # Check if identification has already been done AND files/URLs are unchanged
+            
             if "pdf_category" in state and state["pdf_category"] in ["online", "offline", "both"]:
                 if state["pdf_category"] == "online":
                     if self.last_online_url == state.get("pdf_url", None):
@@ -300,7 +299,7 @@ class PDFAgent(BaseModel):
             if self.online_saved:
                 response = self.tools["rag"].run(state["query"])
 
-            updated_state = {**state,"final_answer":response}
+            updated_state = {**state,"answer_dict":response}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -316,24 +315,59 @@ class PDFAgent(BaseModel):
             if self.offline_saved:
                 response = self.tools["rag"].run(state["query"])
 
-            updated_state = {**state,"final_answer":response}
+            updated_state = {**state,"answer_dict":response}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
         
         def run_both_tool(state: GraphState) -> GraphState:
             """
-            Runs both tools 
+            Runs both online and offline retrievals and combines the results.
             """
             node_name = "run_both_tool"
             node_start_time = logger.log_node_entry(node_name, state)
+
+            query = state["query"]
+            combined_answer = ""
+            combined_context = []
+
+             
+            answer_dict = {
+                "response": None,
+                "context":None
+            }
+            if self.offline_saved:
+                offline_result = self.tools["rag"].run(query)
+                combined_answer += f"**Offline PDF Response:**\n{offline_result.get('response', '')}\n\n"
+                combined_context.extend(offline_result.get("context", []))
+
+            if self.online_saved:
+                online_result = self.tools["rag"].run(query)
+                combined_answer += f"**Online PDF Response:**\n{online_result.get('response', '')}\n\n"
+                combined_context.extend(online_result.get("context", []))
+
+            # Store final result
+            answer_dict["response"] = combined_answer.strip()
+            answer_dict["context"] = combined_context
+
+            updated_state = {
+                **state,
+                "answer_dict": answer_dict
+            }
+
+            logger.log_node_exit(node_name, updated_state, node_start_time)
+            return updated_state
 
         def retrieve_values(state:GraphState) -> GraphState:
             node_name = "retrieve_values"
             node_start_time = logger.log_node_entry(node_name, state)
             
+            # We now retrieve the values from the state
+            response = state["answer_dict"]
+            # THe final answer is a string containig the explanation 
+            updated_state = {**state,"final_answer":response["response"]}
+            logger.log_node_exit(node_name, updated_state, node_start_time)
 
-        def generate_answer(state: GraphState) -> GraphState:
-            pass 
+            return updated_state
 
         workflow.add_node("identify_pdf_format",identify_pdf_format)
         workflow.add_node("populate_vector_store", populate_vector_store_node)
@@ -341,7 +375,6 @@ class PDFAgent(BaseModel):
         workflow.add_node("run_offline_tool",run_offline_tool)
         workflow.add_node("run_both_tool",run_both_tool)
         workflow.add_node("retrieve_values",retrieve_values)
-        workflow.add_node("generate_answer",generate_answer)
 
         workflow.set_entry_point("identify_pdf_format")
         
@@ -363,8 +396,7 @@ class PDFAgent(BaseModel):
         workflow.add_edge("run_both_tool","retrieve_values")
         workflow.add_edge("run_offline_tool","retrieve_values")
         workflow.add_edge("run_online_tool","retrieve_values")
-        workflow.add_edge("retrieve_values","generate_answer")
-        workflow.set_finish_point("generate_answer")
+        workflow.set_finish_point("retrieve_values")
 
         return workflow
     
@@ -380,21 +412,55 @@ class PDFAgent(BaseModel):
         
         return executor
     
-    def run(self, query: str,filename:str=None):
-        """Run the agent with the given query."""
+    def run(self, query: str, filename: str = None):
+        """Run the agent with the given query, preserving state."""
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running PDFAgent with query: {query}")
-        
+
         try:
             executor = self.initialize_agent()
-            uploaded = False if filename is None else True
+            
+            uploaded = True if filename is None else False
             self.uploaded_filename = filename
-            result = executor.invoke({"query": query,"online":uploaded})
 
-            self.logger.end_agent_run(result)
-            return result["final_answer"]
+            # Step 1: Initialize state if not already done
+            if not self.graph_state:
+                self.graph_state = {
+                    "query": query,
+                    "final_answer": None,
+                    "online": uploaded,
+                    "answer_dict": {},
+                    "sources": None,
+                    "pdf_url": None,
+                    "pdf_category": "",
+                    "vector_store_populated": False
+                }
+            else:
+                # Step 2: Preserve existing state but update new query
+                self.graph_state.update({
+                    "query": query,
+                    "online": uploaded
+                })
+
+            # Step 3: Invoke the workflow
+            result = executor.invoke(self.graph_state)
+            self.logger.logger.info("PDFAgent Execution Completed")
+
+            # Step 4: Save updated state for future reuse
+            self.graph_state = result
+
+            # Step 5: Return final answer
+            trimmed_result = {
+                "final_answer": result.get("final_answer"),
+                "answer_dict": result.get("answer_dict")
+            }
         except Exception as e:
             self.logger.log_error("agent_run", e)
             self.logger.logger.error(f"PDFAgent run failed: {str(e)}")
-            return f"Error running PDFAgent: {str(e)}"
-    
+            raise e 
+        
+        finally:
+            if self.end_agent:
+                self.logger.end_agent_run(result)
+            
+        return trimmed_result

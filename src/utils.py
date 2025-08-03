@@ -302,7 +302,7 @@ class CustomSearchTool(BaseTool):
         # Initialize the Tavily tool
         self.web_search_tool = TavilySearch(
             tavily_api_key=tavily_api_key,
-            max_results=5,
+            max_results=3,
             topic="general",
             include_images=True,
             include_image_descriptions=True
@@ -312,7 +312,7 @@ class CustomSearchTool(BaseTool):
         """
         Format travily response for the llm usage
         """
-        # Filter results with score > 0.35
+        # Filter results with score > 0.60
         filtered_results = [
             {
                 "title": result.get("title"),
@@ -320,7 +320,7 @@ class CustomSearchTool(BaseTool):
                 "content": result.get("content"),
             }
             for result in raw_response.get("results", [])
-            if result.get("score", 0) > 0.35
+            if result.get("score", 0) > 0.60
         ]
 
         # Get only the first 2 images with url and description

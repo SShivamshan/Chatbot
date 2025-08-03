@@ -2,7 +2,7 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-#  
+# Need to add memory for some agents like COde and KBagent
 # Test entier process altogether
 # Add The llm handler to the app and test 
 

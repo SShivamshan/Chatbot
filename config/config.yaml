@@ -401,15 +401,26 @@ Agent_templates:
         - If `query_type` is **"web_search"**, prioritize **broad but relevant keywords** with synonyms and related terms to ensure optimal search engine retrieval.  
         - If `query_type` is **"web_scrape"**, prioritize **precise keywords** that help locate structured(sections, information, figures) data from specific sources, like research papers, company websites, or databases.  
 
-        Additional instructions:  
+        Additional instructions: 
+          - If query_type is "web_search": 
+            - Prioritize broad but relevant keywords, including synonyms and related terms for better retrieval across search engines.
+            - Append filetype filters (e.g., filetype:pdf, filetype:html) to relevant keyword phrases if the query suggests looking for documents, research, or technical content.
+              Example: "machine learning introduction filetype:pdf"
+            - Use correct search engine syntax — especially filetype:pdf and other search engine syntaxes.
+
+          If query_type is "web_scrape":
+            - Focus on precise, specific keywords to target structured or narrowly defined content from web pages, research portals, company sites, or databases.
+            - Avoid filetype filters for scraping — they are irrelevant for DOM-based extraction.
+        
+        General: 
         - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").  
         - **Include synonyms or related terms** for better accuracy.  
-        - **Prioritize relevant file formats** (PDF, HTML) for **web_search**.  
-        - Append file types (e.g., `:pdf`, `:html`) to the keyword for **web_search** but not for **web_scrape**.  
+        - Avoid natural language sentences — return only search-efficient keywords or phrases meant for search engines.
+        - A maximum of such keywords. 
 
         Example Output format:
-        - For a **web search** query like "Lidar camera detection", return `["Lidar camera detection:pdf", "Lidar camera detection:html"]`  
-        - For a **web scraping** query like "Recent research on LiDAR sensors", return `["LiDAR sensor detection", "LiDAR sensor technology"]`  
+        - For a **web search** query like "Lidar camera detection", return `["Lidar camera detection filetype:pdf", "Lidar sensor detection filetype:html", 3D imaging Lidar systems filetype:pdf]`  
+        - For a **web scraping** query like "Recent research on LiDAR sensors", return `["LiDAR sensor detection", "LiDAR sensor technology", "Recent LiDAR research findings"]`  
 
         <|start_header_id|>user<|end_header_id|>
         Query to analyze: {query}  
@@ -1221,4 +1232,110 @@ Agent_templates:
         }
 
         
+# ==================================================================================== AgenticRAG template ==================================================================================== #
+    Agentic_RAG_template:
+      name: "Agentic_RAG_template"
+      template: |
+        <|begin_of_text|>
+
+        <|start_header_id|>system<|end_header_id|>
+
+        You are an expert system designed to classify and split user queries based on their retrieval needs. Your task is to analyze each query and determine whether it pertains to:
+
+        - **pdf**: If the query is asking about information from a local or online PDF document.
+        - **web**: If the query is asking for up-to-date or external information that needs to be retrieved from the internet.
+        - **[pdf,web]**: If the query requires information from both a PDF and the web.
+
+        ## Few-shot examples
+
+        ### Example 1:
+        **Query**: "Can you analyze this paper for me? https://arxiv.org/pdf/2106.14807.pdf"
+
+        **Output**:
+        ```json
+        {{
+          "query_type": ["pdf"],
+          "pdf_query": "What are the main findings in this research paper ? {{url}}?"
+          "web_query": ""
+        }}
+        ```
+
+        ### Example 2:
+        **Query**: "What's the latest GDP growth rate for India in 2025?"
+
+        **Output**:
+        ```json
+        {{
+          "query_type": ["web"],
+          "pdf_query": ""
+          "web_query": "What's the latest GDP growth rate for India in 2025?"
+        }}
+        ```
+
+        ### Example 3:
+        **Query**: "Compare the climate data in the uploaded PDF with the most recent UN climate report."
+
+        **Output**:
+        ```json
+        {{
+          "query_type": ["pdf","web"]
+          "pdf_query": "What climate data is presented in the uploaded PDF?"
+          "web_query": "What are the most recent findings from the UN climate report?"
+        }}
+        ```
+
+        ### Example 4:
+        **Query**: " What are the main findings in the research paper I uploaded?"
+
+        **Output**:
+        ```json
+        {{
+          "query_type": ["pdf"]
+          "pdf_query": ""
+          "web_query": "What are the main findings in the uploaded research paper?"
+        }}
+        ```
+
+        Be precise. Rephrase the sub-queries where necessary to make them standalone and meaningful for downstream agents.
+
+        <|start_header_id|>user<|end_header_id|>
+        **Query**: {query}
+
+        <|start_header_id|>assistant<|end_header_id|>
+        ```json
+        {{
+        "query_type":string[],
+        "pdf_query":string,
+        "web_query":string,
+        }}
+        ```
+        <|eot_id|>
+        <|end_of_text|>
+
+      input_variables:
+        - name: query
+          description: The query given by the user
+          is_required: true
+
+      output_parser:
+        type: "json"
+        schema: {
+          "type": "object",
+          "properties": {
+            "query_type": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "pdf_query": {
+              "type": "string"
+            },
+            "web_query": {
+              "type": "string"
+            }
+            
+          },
+          "required": ["query_type","pdf_query","web_query"]
+        }
 

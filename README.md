@@ -161,7 +161,8 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 4. Improvements linked to constrained environments. 
 5. Possibly adding docker support 
 6. Possibility of adding the configuration to interact with google applications especially for code like a sandbox application where we could run a test file.  
-7. Modular Coding Agent Architecture : To improve the structure and performance of the coding agent, consider dividing it into three specialized sub-agents, each with a distinct responsibility:
+7. For now, the webagent only does a summary of all the retrieved urls but further improvement can be done by using scraping and diving deep onto further enhancing the answer. 
+8. Modular Coding Agent Architecture : To improve the structure and performance of the coding agent, consider dividing it into three specialized sub-agents, each with a distinct responsibility:
 
     - Research Agent: This agent is responsible for researching the problem domain. It can also explore and analyze the folder and file structure to gather relevant context before any coding begins.
     - Coder Agent: This agent plans and writes the code based on the insights provided by the research agent. It defines the overall architecture, selects tools or libraries, and implements the solution.

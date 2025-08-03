@@ -4,6 +4,7 @@ from langchain.prompts import PromptTemplate
 from langgraph.graph import StateGraph
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.messages import AIMessage
+from langchain.memory import ConversationBufferMemory
 from models.Model import Chatbot
 from src.utils import *
 from src.AgentLogger import AgentLogger
@@ -35,7 +36,9 @@ class WebAgent(BaseModel):
     question_to_keywords: Optional[Any] = Field(default=None, exclude=True)
     query_web_scrape: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
-    
+    memory:Optional[Any] = Field(default=None,exclude=True)
+    end_agent:bool = Field(default=True)
+
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -43,10 +46,12 @@ class WebAgent(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        end_agent:bool = True
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
+        self.end_agent = end_agent
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent")
         self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
@@ -70,7 +75,9 @@ class WebAgent(BaseModel):
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
 
         self.logger.logger.info("Web Agent Tools and templates loaded")
-        
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+
     def _create_template(self,template_name:str) -> PromptTemplate:
         try:
             self.logger.logger.debug("Loading template")
@@ -269,6 +276,14 @@ class WebAgent(BaseModel):
                     if "content" in result:
                         scrape_content = result["content"]
                         break
+            
+            chat_history = self.memory.load_memory_variables({}).get("chat_history", [])
+            history_text = ""
+            for msg in chat_history:
+                if msg.type == "human":
+                    history_text += f"\nUser: {msg.content}"
+                elif msg.type == "ai":
+                    history_text += f"\nAI: {msg.content}"
 
             if state.get("scrape_category") == "general_summary" and scrape_content:
                 final_answer = scrape_content
@@ -298,26 +313,34 @@ class WebAgent(BaseModel):
                     for img in all_images if img.get("url") and img.get("description")
                 ]
 
-                # Build prompt
                 prompt = f"""
-                Query: {state['query']}
-                
+                Previous conversation:
+                {history_text}
+
+                Current query:
+                {state['query']}
+
                 Search Results:
                 {result_text}
 
-                Based on the above search results, provide a comprehensive summary for the given query.
+                Based on the previous conversation and the current search results, provide a comprehensive answer.
                 """
 
                 final_answer = self.llm.invoke(prompt)
 
                 # Prepare sources
                 sources = [
-                    {"title": res.get("title"), "url": res.get("url")}
+                    {"title": res.get("title"), "url": res.get("url"), "content": res.get("content",None)}
                     for res in top_results if res.get("title") and res.get("url")
                 ]
 
                 # Append images as sources
                 sources.extend(formatted_images)
+                if self.memory:
+                    self.memory.save_context(
+                        {"query": state["query"]},
+                        {"output": final_answer if isinstance(final_answer, str) else final_answer.content}
+                    )
             else:
                 prompt = f"""
                 Query: {state["query"]}
@@ -398,6 +421,10 @@ class WebAgent(BaseModel):
         
         return executor
     
+    def clear_memory(self):
+        if self.memory:
+            self.memory.clear()
+    
     def run(self, query: str):
         """Run the agent with the given query."""
         self.logger.start_agent_run(query)
@@ -406,14 +433,17 @@ class WebAgent(BaseModel):
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
-
-            self.logger.end_agent_run(result)
-            return { # the final answer can be in AI message type or just str
-                "answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated."),
-                "sources": result.get("sources", []),
-                "query": result.get("query", "")
-            }
+            self.logger.logger.info("WebAgent Execution Completed")
         except Exception as e:
             self.logger.log_error("agent_run", e)
             self.logger.logger.error(f"WebAgent run failed: {str(e)}")
             return f"Error running WebAgent: {str(e)}"
+
+        finally:
+            if self.end_agent:
+                self.logger.end_agent_run(result)
+        
+        return { 
+            "final_answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated."),
+            "sources": result.get("sources", [])
+        }
