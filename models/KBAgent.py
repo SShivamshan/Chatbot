@@ -25,6 +25,8 @@ class KBAgent(BaseModel):
     knowledge_result: Optional[Any] = Field(default=None, exclude=True)
     domain_context: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
+    memory:Optional[Any] = Field(default=None,exclude=True)
+    end_agent:bool = Field(default=True)
 
     def __init__(
         self,
@@ -33,12 +35,13 @@ class KBAgent(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        end_agent:bool = True
     ):
         super().__init__()
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Knowledge Base Agent")
         self.logger.logger.info(f"Initializing Knowledge Base agent with model: {model_name}")
-
+        self.end_agent = end_agent
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
@@ -53,6 +56,7 @@ class KBAgent(BaseModel):
         KNOWLEDGE_AGENT_PROMPT = self._create_template(template_name="Knowledge_base_template")
         self.knowledge_result = KNOWLEDGE_AGENT_PROMPT | self.llm | JsonOutputParser()
 
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
         self.logger.logger.info("Knowledge base agent template loaded")
 
     def _create_template(self, template_name: str) -> PromptTemplate:
@@ -72,7 +76,7 @@ class KBAgent(BaseModel):
 
         formatted_text = "\n\n".join(
             [
-                f"Title: {title}\n {contents}"
+                f"{title}\n {contents}"
                 for title,contents in zip(content["title"],content["answer"])
             ]
         )
@@ -103,7 +107,15 @@ class KBAgent(BaseModel):
             node_name = "retrieve_knowledge"
             node_start_time = logger.log_node_entry(node_name, state)
 
-            result = self.knowledge_result.invoke({"query": state["query"],"domain":state["domain"],"subdomain":state["subdomain"]})
+            chat_history = self.memory.load_memory_variables({}).get("chat_history", "")
+            history_text = ""
+            for msg in chat_history:
+                if msg.type == "human":
+                    history_text += f"\nUser: {msg.content}"
+                elif msg.type == "ai":
+                    history_text += f"\nAI: {msg.content}"
+
+            result = self.knowledge_result.invoke({"query": state["query"],"domain":state["domain"],"subdomain":state["subdomain"], "chat_history":history_text})
             
             formatted_response = self.format_knowledge(result)
             sources = [
@@ -141,21 +153,31 @@ class KBAgent(BaseModel):
         
         return executor
     
+    def clear_memory(self):
+        if self.memory:
+            self.memory.clear()
+    
     def run(self, query: str):
         """Run the agent with the given query."""
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running Knowledge base agent with query: {query}")
-        
+        result = None
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
+            self.logger.logger.info(f"Knowledge base agent finished running..")
 
-            self.logger.end_agent_run(result)
-            return {
-                "answer": result.get("final_answer", "No answer generated."),
-                "sources": result.get("sources",[])
-            }
+            if self.memory:
+                self.memory.save_context({"input": query}, {"output": result.get("final_answer", "")})
+                
         except Exception as e:
             self.logger.log_error("agent_run", e)
             self.logger.logger.error(f"Knowledge base Agent run failed: {str(e)}")
             return f"Error running Knowledge base agent: {str(e)}"
+        finally:
+            if self.end_agent:
+                self.logger.end_agent_run(result)
+            return {
+                "final_answer": result.get("final_answer", "No answer generated."),
+                "sources": result.get("sources",[])
+            }

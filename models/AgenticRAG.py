@@ -8,12 +8,11 @@ from src.utils import *
 from src.AgentLogger import AgentLogger
 from models.WebAgent import WebAgent
 from models.PDFAgent import PDFAgent
+from langchain_ollama import OllamaEmbeddings
+from langchain_chroma import Chroma
 
 # This class is in charge of the AgenticRAG approach in which we can either use external knowledge such as a pdf or search on the web to get the knowledge or both
 # Here we don't maintain memory since the own agent takes care of that. 
-
-## TODO
-# Web agent works with the agentic RAG but not the pdf agent at the populate_vectorstore node
 
 class GraphState(TypedDict):
     query: str
@@ -23,6 +22,7 @@ class GraphState(TypedDict):
     query_type: Optional[str]
     answer_dict: Dict
     filename: str 
+    sources: Optional[List]
 
 class AgenticRAG(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -32,6 +32,7 @@ class AgenticRAG(BaseModel):
     llm: Optional[Any] = Field(default=None, exclude=True)
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
+    end_agent:bool = Field(default=True)
 
     def __init__(
         self,
@@ -40,13 +41,14 @@ class AgenticRAG(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        end_agent : bool = True   
     ):
         super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="PDF Agent")
-        self.logger.logger.info(f"Initializing CodeAgent with model: {model_name}")
-        
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="AgenticRAG")
+        self.logger.logger.info(f"Initializing AgenticRAG with model: {model_name}")
+        self.end_agent = end_agent
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
@@ -142,9 +144,40 @@ class AgenticRAG(BaseModel):
             pdf_response = self.tools["pdf_agent"].run(state["pdf_query"],filename=state["filename"])
             web_response = self.tools["web_agent"].run(state["web_query"])
 
+            # Once we ran the web response we will retrieve the sources which will contain the title, url and the content to 
+            # be saved inside a temporay vectorstore then use it to retrieve the appropriate info for the web search before 
+
+            sources = web_response.get("sources", [])
+
+            # Build docs for temp vector store (text + image descriptions)
+            web_docs = []
+            embeddings = OllamaEmbeddings(
+                            model="nomic-embed-text:latest",
+                            base_url="http://localhost:11434"
+                        )
+            for src in sources:
+                if src.get("content"):
+                    web_docs.append(f"Title: {src['title']}\nURL: {src['url']}\nContent: {src['content']}")
+
+            # Add image descriptions
+            images = [s for s in sources if "description" in s and s.get("description")]
+            for img in images:
+                web_docs.append(f"Image: {img['url']}\nDescription: {img['description']}")
+
+            if web_docs:
+                temp_store = Chroma.from_texts(web_docs,embeddings)
+                relevant_chunks = temp_store.similarity_search(state["web_query"], k=3)
+
+                refined_web_context = "\n\n".join([chunk.page_content for chunk in relevant_chunks])
+            else:
+                refined_web_context = web_response.get("final_answer", "")
+
             # Simple merge logic
-            final_answer = f"PDF: {pdf_response.get('final_answer', '')}\n\nWeb: {web_response.get('final_answer', '')}"
-            combined_sources = [pdf_response.get("answer_dict", {})] + web_response.get("sources", [])
+            final_answer = (
+                f"**PDF Summary:**\n{pdf_response.get('final_answer', '')}\n\n"
+                f"**Web Summary (Refined from text & images):**\n{refined_web_context}"
+            )
+            combined_sources = [pdf_response.get("sources", {})] + sources
 
             updated_state = {
                 **state,
@@ -153,6 +186,7 @@ class AgenticRAG(BaseModel):
                     "sources": combined_sources
                 }
             }
+            unload_model(logger=self.logger.logger, model_name="nomic-embed-text:latest")
 
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
@@ -164,7 +198,7 @@ class AgenticRAG(BaseModel):
             # We now retrieve the values from the state
             response = state["answer_dict"]
             
-            updated_state = {**state,"final_answer":response["final_answer"]}
+            updated_state = {**state,"final_answer":response["final_answer"],"sources":response["sources"]}
             logger.log_node_exit(node_name, updated_state, node_start_time)
 
             return updated_state
@@ -218,7 +252,7 @@ class AgenticRAG(BaseModel):
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running AgenticRAG with query: {query}")
         executor = self.initialize_agent()
-
+        result = None
         # Initialize state
         state: GraphState = { 
             "query": query,
@@ -238,12 +272,10 @@ class AgenticRAG(BaseModel):
             self.logger.logger.error(f"AgenticRAG run failed: {str(e)}")
             raise e
         finally:
-            self.logger.end_agent_run(result)
+            if self.end_agent:
+                self.logger.end_agent_run(result)
 
         return {
-                "answer_dict": result.get("answer_dict",None)
+                "final_answer": result.get("final_answer",None),
+                "sources": result.get("sources",None)
             }
-
-        
-
-        

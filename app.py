@@ -24,8 +24,13 @@ from langchain.chains.conversation.memory import ConversationBufferMemory
 
 sys.path.append(".")
 from models.Model import Chatbot
-from models.WebAgent import Agent
 from models.RAG import RAG
+# Agents
+from models.WebAgent import WebAgent
+from models.AgenticRAG import AgenticRAG
+from models.CodeAgent import CodeAgent
+from models.KBAgent import KBAgent
+
 from pages.home import HomePage
 from pages.chat import ChatPage
 from pages.history import HistoryPage
@@ -448,7 +453,7 @@ class ChatbotApp:
         chat_type = st.session_state.sessions[session_id]["chat_type"]
         session = st.session_state.sessions[session_id]
         """Displays the chat for the current session."""
-        if session_id and chat_type == 0:
+        if session_id and chat_type == 0: # Chatbot 
             self.chatbot = self.get_or_create_llm(chat_type=chat_type)
 
             session = st.session_state.sessions[session_id]
@@ -463,7 +468,7 @@ class ChatbotApp:
             # Input handling
             self.handle_input(chat_type=chat_type)
 
-        elif session_id and chat_type == 2:
+        elif session_id and chat_type == 2: # Only allows the talk with pds(mostly with offline pdf)
             col1, col2 = st.columns([5, 5], gap="large")  
             with col1:
                 uploaded_file = st.file_uploader("Choose a PDF file")# accept_multiple_files=True
@@ -508,9 +513,12 @@ class ChatbotApp:
                 # Handle new user input  
                 self.handle_input(chat_type=chat_type, container=message_container)
 
-        elif session_id and  chat_type == 1:
+        elif session_id and  chat_type == 1: # Agent section    
             agent_col1, agent_col2 = st.columns([5, 5], gap="large") 
+            uploaded_file = None
             with agent_col1:
+
+                uploaded_file = st.file_uploader("Choose a PDF file") # accept_multiple_files=True
                 container_key = f"chat_container_agent_{session_id}"
                 agent_message_container = st.container(height=800 ,key=container_key)
                 with agent_message_container: 
@@ -518,8 +526,31 @@ class ChatbotApp:
                     # Display existing messages
                     self.display_messages(session["messages"], container=agent_message_container)
                 self.handle_input(chat_type=chat_type, container=agent_message_container)
+
             with agent_col2:  # Reference and other information showing area updated each time 
-                pass
+                # Split into two stacked containers
+                container_key = f"info_container_agent_{session_id}"
+                tabs = st.tabs(["Agent Logs & Graph", "Agent Results", "PDF Viewer"])
+
+                with tabs[0]:
+                    container_key = f"info_container_agent_{session_id}_logs"
+                    top_container = st.container(height=800, key=container_key)
+                    with top_container:
+                        st.markdown("### Agent Logs & Graph")
+
+                with tabs[1]:
+                    container_key = f"info_container_agent_{session_id}_results"
+                    bottom_container = st.container(height=800, key=container_key)
+                    with bottom_container:
+                        st.markdown("### Agent Results")
+
+                with tabs[2]:
+                    container_key = f"info_container_agent_{session_id}_pdf"
+                    pdf_container = st.container(height=800, key=container_key)
+                    with pdf_container:
+                        st.markdown("### PDF Viewer")
+                        if uploaded_file:
+                            self.display_pdf(uploaded_file,width=800)
         else:
             st.write("No active session. Please create or switch to a session.")
 
@@ -651,7 +682,7 @@ class ChatbotApp:
                     message = "LLM instance is not created, to do so upload a PDF file"
                     self.popover_messages(message=message,msg_type="WARNING")
         else:
-            st.markdown("Type `/link`, `/pdf` in the box below to see them highlighted.")
+            # st.markdown("Type `/link`, `/pdf` in the box below to see them highlighted.")
             user_input = st.chat_input(placeholder="Ask me anything...",key="1")
 
             if user_input and st.session_state.current_session_id:
@@ -659,7 +690,7 @@ class ChatbotApp:
                 if "last_saved_index" not in st.session_state.sessions[st.session_state.current_session_id]:
                     st.session_state.sessions[st.session_state.current_session_id]["last_saved_index"] = -1
 
-                flag, query = parse_flags_and_queries(input_text=user_input)
+                # flag, query = parse_flags_and_queries(input_text=user_input)
                 # Verification phase for the flags and their sub flags if given 
                 session["messages"].append({"User": user_input})
 

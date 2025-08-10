@@ -7,9 +7,9 @@ from langchain_core.output_parsers import JsonOutputParser
 from models.Model import Chatbot
 from src.utils import *
 from src.AgentLogger import AgentLogger
-from models.WebAgent import WebAgent
 from models.KBAgent import KBAgent
 from models.CodeAgent import CodeAgent
+from models.AgenticRAG import AgenticRAG
 
 # Solutions adpated from: https://langchain-ai.github.io/langgraph/concepts/multi_agent/#handoffs-as-tools , 
 # https://blog.futuresmart.ai/multi-agent-system-with-langgraph 
@@ -18,7 +18,7 @@ class GraphState(TypedDict):
     agent_route: Optional[List[str]]
     agent_routes: Optional[List[str]]
     agent_confidence: Optional[float]
-    subagent_results: Optional[List]
+    subagent_results: Optional[Dict]
 
 class SupervisorAgent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -69,10 +69,10 @@ class SupervisorAgent(BaseModel):
 
     def initialize_sub_agents(self):
         self.logger.logger.debug("Initializing sub agents")
-        webagent_tool = WebAgent(chatbot=self.llm)
-        kbagent_tool = KBAgent(chatbot=self.llm)
-        codeagent_tool = CodeAgent(Chatbot=self.llm)
-        return {"WebAgent": webagent_tool,"KBAgent":kbagent_tool,"CodeAgent":codeagent_tool}
+        kbagent_tool = KBAgent(chatbot=self.llm,end_agent=False)
+        codeagent_tool = CodeAgent(chatbot=self.llm,end_agent=False)
+        agenticrag_tool = AgenticRAG(chatbot=self.llm,end_agent = False)
+        return {"KBAgent":kbagent_tool,"CodeAgent":codeagent_tool, "AgenticRAG":agenticrag_tool}
 
     def create_graph(self):
         """Create a workflow for Supervisor agent operations."""
@@ -124,7 +124,7 @@ class SupervisorAgent(BaseModel):
 
         def format_agent_results(state: GraphState) -> GraphState:
             logger.logger.debug("Formatting subagent results (stubbed)")
-            return state  # Implement formatting later
+            return state  
 
         # Add nodes
         workflow.add_node("identify_query", identify_query)
@@ -147,13 +147,16 @@ class SupervisorAgent(BaseModel):
     def run(self, query: str):
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running SupervisorAgent...")
+        result = None
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
-            self.logger.end_agent_run(result,False)
-            return result["subagent_results"]
+            self.logger.logger.info(f"SupervisorAgent finished running...")
         except Exception as e:
             self.logger.log_error("agent_run", e)
             self.logger.logger.error(f"SupervisorAgent run failed: {str(e)}")
             return f"Error running SupervisorAgent: {str(e)}"
+        finally:
+            self.logger.end_agent_run(result,False)
+            return result["subagent_results"]
     

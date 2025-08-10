@@ -22,36 +22,36 @@ The chatbot will start, and you can begin interacting with it through the comman
 ```
 llm/
 ├── app.py                  # Main application entry point
-├── config/
-│   └── config.yaml        # Template configurations 
-│
-├── database/              # Database related files
+├── config
+│   └── config.yaml         # Template configurations 
+├── database/               # Database related files
 │   ├── app.db
 │   └── chroma.sqlite3
-│
-├── images/
-│   └── ai.png            # Project images
-│
-├── models/               # Model definitions
-│   ├── Agent.py         # Agent model implementation
-│   ├── Model.py         # Base model implementation
-│   └── RAG.py           # RAG model implementation
-│
-├── pages/               # Application pages
-│   ├── account.py       # Account management page
-│   ├── base.py         # Base page template for the app.db 
-│   ├── chat.py         # Chat interface renderer
-│   ├── data_db.py      # Database interface containing the chat session, image and table management
-│   ├── history.py      # Chat history page renderer
-│   └── home.py         # Home page
-│
-├── src/        
-|   ├── download_tokens.py  # Allows to download tokens     
-│   ├── main.py             # Main logic
-│   └── utils.py            # Utility functions
-│
-├── LICENSE             # License file
-└──  README.md          # Project documentation
+├── images                  # Project images
+├── LICENSE                 # License file
+├── models                  # Model definitions
+│   ├── AgenticRAG.py
+│   ├── CodeAgent.py
+│   ├── KBAgent.py
+│   ├── Model.py
+│   ├── PDFAgent.py
+│   ├── RAG.py
+│   ├── SupervisorAgent.py
+│   └── WebAgent.py
+├── pages                   # Application pages
+│   ├── account.py          # Account management page
+│   ├── base.py             # Base page template for the app.db 
+│   ├── chat.py             # Chat interface renderer
+│   ├── data_db.py          # Database interface containing the chat session, image and table management
+│   ├── history.py          # Chat history page renderer
+│   ├── home.py             # Home page
+├── src
+│   ├── AgentLogger.py      # Agent Logger using the `rich` module
+│   ├── download_tokens.py  # Allows to download tokens 
+│   ├── main.py             # Main logic file
+│   ├── run_agent.py        # Utility functions
+│   └── utils.py
+└── README.md               # Project documentation
 ```
 
 ## Installation

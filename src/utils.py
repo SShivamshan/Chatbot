@@ -167,21 +167,38 @@ def load_ai_template(config_path: str) -> Dict:
     return config
 
 
-def get_file_hash(file:str) -> str:
+def get_file_hash(file: Union[str, BytesIO]) -> str:
     """
-    Create the hash for a given file  
-    
+    Create the hash for the first 100 bytes of a given file,
+    supports local file path, URL, or file-like object.
+
     params
     ------
-        - file (str): Path of the given file
+    - file (str or file-like): File path, URL, or file-like object
 
     returns
     -------
-        str: Hash of the given file
+    - str: MD5 hash of the first 100 bytes of the file
     """
-    file.seek(0)
-    file_hash = hashlib.md5(file.read()).hexdigest()
-    file.seek(0)
+    # Get first 100 bytes depending on input type
+    if isinstance(file, str):
+        if file.startswith("http://") or file.startswith("https://"):
+            # URL: download first 100 bytes
+            response = requests.get(file, stream=True)
+            response.raise_for_status()
+            first_100_bytes = response.raw.read(100)
+        else:
+            # File path: open and read first 25 bytes
+            with open(file, "rb") as f:
+                first_100_bytes = f.read(100)
+    else:
+        # File-like object
+        file.seek(0)
+        first_100_bytes = file.read(100)
+        file.seek(0)  # Reset pointer after reading
+
+    # Hash the first 100 bytes
+    file_hash = hashlib.md5(first_100_bytes).hexdigest()
     return file_hash
 
 class LineListOutputParser(BaseOutputParser[List[str]]):
@@ -288,14 +305,16 @@ class CustomSearchTool(BaseTool):
     name: str = "web_search"
     description: str = "Useful for answering current or recent questions using Tavily web search."
     web_search_tool: Optional[TavilySearch] = Field(default=None, exclude=True)
+    llm: Optional[Any] = Field(default=None, exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self):
+    def __init__(self,llm:Optional[Any] = None):
         super().__init__()
         load_dotenv()
         tavily_api_key = os.getenv("TAVILY_API_KEY")
+        self.llm = llm 
         if not tavily_api_key:
             raise ValueError("TAVILY_API_KEY not set in environment variables.")
 
@@ -303,11 +322,44 @@ class CustomSearchTool(BaseTool):
         self.web_search_tool = TavilySearch(
             tavily_api_key=tavily_api_key,
             max_results=3,
-            topic="general",
+            topic="general", # Perhaps creating a flag in which we can each time we search for advaned topics 
+            include_raw_content = True,
             include_images=True,
             include_image_descriptions=True
         )
-    
+
+    def summarize_content(self,result:dict,max_words:int = 500):
+        summarize_template = """
+        You are an expert summarizer.
+        Summarize the following content into a clear, and accurate summary.
+
+        Content:
+        {content}
+
+        Guidelines:
+        - Keep the summary under {max_words} words.
+        - Capture the key points, main ideas, and essential details.
+        - Use plain, clear language.
+        - Do not include personal opinions or interpretations.
+        - Maintain factual accuracy.
+
+        Summary:
+        """
+        summary_prompt = PromptTemplate(
+            input_variables=["content", "max_words"],
+            template=summarize_template
+        )
+
+        content = result.get("raw_content", "")
+
+        result = None
+        if content != "":
+            result = self.llm.invoke(summary_prompt.format(content = content, max_words = max_words)).content
+        else:
+            result = "No content available for this search result"
+
+        return result
+
     def format_tavily_response(self, raw_response: dict):
         """
         Format travily response for the llm usage
@@ -317,7 +369,7 @@ class CustomSearchTool(BaseTool):
             {
                 "title": result.get("title"),
                 "url": result.get("url"),
-                "content": result.get("content"),
+                "content": self.summarize_content(result)
             }
             for result in raw_response.get("results", [])
             if result.get("score", 0) > 0.60
@@ -621,13 +673,14 @@ class CodeGeneratorTool(BaseTool):
         super().__init__()
         self.llm = llm
 
-    def _run(self, query: str, steps: List[str]) -> dict:
+    def _run(self, query: str, steps: List[str],chat_history:str) -> dict:
         """
         Uses an LLM to generate Python code based on the query and structured steps.
 
         Args:
             query (str): The programming task description.
             steps (List[str]): A structured sequence of steps to implement the solution.
+            chat_history(str): THe previously generated code history 
 
         Returns:
             str: The generated Python code.
@@ -635,7 +688,7 @@ class CodeGeneratorTool(BaseTool):
         steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(steps))
         prompt = self._generate_prompt()
         llm_chain = prompt | self.llm | StrOutputParser()
-        response = llm_chain.invoke({"query": query, "steps_text": steps_text})
+        response = llm_chain.invoke({"query": query, "steps_text": steps_text, "chat_history": chat_history})
         return response
 
     def _generate_prompt(self) -> PromptTemplate:
@@ -976,33 +1029,45 @@ class Vectordb:
         return cls._instance
 
     def __init__(self, NAME: str = None) -> None:
-        if not hasattr(self, 'initialized'):
-            self.embeddings = OllamaEmbeddings(
-                model="nomic-embed-text:latest",
-                base_url="http://localhost:11434"
-            )
-            self.client = chromadb.PersistentClient(path="database/")
+        if hasattr(self, 'initialized'):
+            return  # Already initialized, skip re-init
 
-            collection_name = "knowledge_base" if NAME is None else NAME
+        self.embeddings = OllamaEmbeddings(
+            model="nomic-embed-text:latest",
+            base_url="http://localhost:11434"
+        )
+
+        db_path = "database/"
+        os.makedirs(db_path, exist_ok=True)  # Make sure dir exists
+
+        self.client = chromadb.PersistentClient(path=db_path)
+
+        collection_name = "knowledge_base" if NAME is None else NAME
+
+        # Try to get the collection, create only if missing
+        try:
+            self.collection = self.client.get_collection(collection_name)
+        except Exception:
             self.collection = self.client.get_or_create_collection(
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
-            self.vector_store = Chroma(
-                client=self.client,
-                collection_name=collection_name,
-                embedding_function=self.embeddings
-            )
-            self.initialized = True
-            self.logger = self._setup_logging()
+
+        self.vector_store = Chroma(
+            client=self.client,
+            collection_name=collection_name,
+            embedding_function=self.embeddings
+        )
+
+        self.logger = self._setup_logging()
+        self.initialized = True
 
     def _setup_logging(self):
         logging.basicConfig(
             level=logging.WARNING,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-        logger = logging.getLogger(__name__)  
-        return logger
+        return logging.getLogger(__name__)
     
     def populate_vector(self, documents: List[Document]) -> bool:
         """

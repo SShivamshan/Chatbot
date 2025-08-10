@@ -51,10 +51,10 @@ class WebAgent(BaseModel):
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
-        self.end_agent = end_agent
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent")
         self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
+        self.end_agent = end_agent
 
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
@@ -74,9 +74,8 @@ class WebAgent(BaseModel):
         QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT = self._create_template(template_name="Query_web_scrape_classification")
         self.query_web_scrape = QUERY_WEB_SCRAPE_CLASSIFICATION_PROMPT | self.llm | JsonOutputParser()
 
-        self.logger.logger.info("Web Agent Tools and templates loaded")
         self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
+        self.logger.logger.info("Web Agent Tools and templates loaded")
 
     def _create_template(self,template_name:str) -> PromptTemplate:
         try:
@@ -96,7 +95,7 @@ class WebAgent(BaseModel):
     def initialize_tools(self):
         self.logger.logger.debug("Initializing tools")
         # Instantiate the tools
-        custom_search_tool = CustomSearchTool()
+        custom_search_tool = CustomSearchTool(llm=self.llm)
         webscrapper_tool = WebscrapperTool(llm=self.llm)
 
         tools = {
@@ -429,7 +428,7 @@ class WebAgent(BaseModel):
         """Run the agent with the given query."""
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running WebAgent with query: {query}")
-        
+        result = None
         try:
             executor = self.initialize_agent()
             result = executor.invoke({"query": query})
@@ -445,5 +444,5 @@ class WebAgent(BaseModel):
         
         return { 
             "final_answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated."),
-            "sources": result.get("sources", [])
+            "sources": result.get("sources", None)
         }

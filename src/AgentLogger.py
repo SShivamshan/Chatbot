@@ -16,7 +16,7 @@ class AgentLogger:
     """
     
     def __init__(self, log_level=logging.INFO, console_output=True, file_output=False, 
-                 log_file="agent_logs.log", pretty_print=True, Agent_name:str = "Supervisor Agent"):
+                 log_file="agent_logs.log", pretty_print=True, Agent_name:str = "Supervisor Agent",record:bool=False):
         """
         Initialize the logger with desired output formats.
         
@@ -40,10 +40,9 @@ class AgentLogger:
         self.logger.setLevel(self.log_level)
         self.logger.handlers = []  # Clear any existing handlers
         
-        # Console handler with Rich formatting if enabled
         if self.console_output:
             if self.pretty_print:
-                self.console = Console()
+                self.console = Console(record=record)
                 console_handler = RichHandler(rich_tracebacks=True, console=self.console)
             else:
                 console_handler = logging.StreamHandler()

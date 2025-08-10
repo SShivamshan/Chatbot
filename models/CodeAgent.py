@@ -29,6 +29,8 @@ class CodeAgent(BaseModel):
     code_query_identification: Optional[Any] = Field(default=None, exclude=True)
     code_list: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
+    memory:Optional[Any] = Field(default=None,exclude=True)
+    end_agent:bool = Field(default=True)
 
     def __init__(
         self,
@@ -37,13 +39,15 @@ class CodeAgent(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        end_agent:bool = True
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Code Agent")
         self.logger.logger.info(f"Initializing CodeAgent with model: {model_name}")
+        self.end_agent = end_agent
 
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
@@ -61,6 +65,7 @@ class CodeAgent(BaseModel):
         CODE_LIST_PROMPT = self._create_template(template_name="Code_generation_list_template")
         self.code_list = CODE_LIST_PROMPT | self.llm | JsonOutputParser()
 
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
         self.logger.logger.info("Code Agent Tools and templates loaded")
 
     def _create_template(self,template_name:str) -> PromptTemplate:
@@ -130,7 +135,7 @@ class CodeAgent(BaseModel):
                 self.logger.logger.warning("No generated code to critique.")
                 return state  # Skip if no code
 
-            # Call the critique tool (runs tests & linting)
+            # Call the critique tool
             critique_result = self.tools["code_critique"]._run(state["generated_code"])
             # Update the steps part
             state["core_steps"] = state["steps"]
@@ -164,8 +169,15 @@ class CodeAgent(BaseModel):
             node_name = "generate_code"
             node_start_time = self.logger.log_node_entry(node_name, state)
 
+            chat_history = self.memory.load_memory_variables({}).get("chat_history", "")
+            code_text = ""
+            for msg in chat_history:
+                if msg.type == "human":
+                    code_text += f"\nUser: {msg.content}"
+                elif msg.type == "ai":
+                    code_text += f"\nCode: {msg.content}"
             # Call the code generation tool
-            code_result = self.tools["code_generator"]._run(query=state["query"],steps=state.get("steps", []))
+            code_result = self.tools["code_generator"]._run(query=state["query"],steps=state.get("steps", []), chat_history=code_text)
 
             updated_state = {**state, "generated_code": code_result}
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
@@ -218,7 +230,7 @@ class CodeAgent(BaseModel):
         def route_code_query_identification(state: GraphState) -> List[str]:
             action_type = state.get("action_type")
             if action_type == "generate":
-                return ["generate_code"]
+                return ["code_research"]
             elif action_type in ["correct", "critique"]: # TO correct the code we first go through the review process so that it could allow us to correct it based on these feedbacks
                 return ["prepare_code_for_critique"]
             elif action_type == "diagram":
@@ -257,24 +269,33 @@ class CodeAgent(BaseModel):
         
         return executor
     
+    def clear_memory(self):
+        if self.memory:
+            self.memory.clear()
+
     def run(self, query: str):
         """Run the agent with the given query."""
         self.logger.start_agent_run(query)
-        self.logger.logger.info(f"Running agent with query: {query}")
-        
+        self.logger.logger.info(f"Running Codeagent with query: {query}")
+        result = None
         try:
             executor = self.initialize_agent()
-            result = executor.invoke({"query": query})
+            result = executor.invoke({"query": query})    
+            self.logger.logger.info(f"CodeAgent finished running...")       
 
-            self.logger.end_agent_run(result)
+            if self.memory:
+                self.memory.save_context({"input": query}, {"output": result.get("final_answer", "")})
+
+        except Exception as e:
+            self.logger.log_error("agent_run", e)
+            self.logger.logger.error(f"Agent run failed: {str(e)}")
+            return f"Error running agent: {str(e)}"
+        finally:
+            if self.end_agent:
+                self.logger.end_agent_run(result)
             return {
                 "generated_code": result.get("generated_code"),
                 "core_steps": result.get("core_steps",""),
                 "critique_feedback": result.get("critique_feedback"),
                 "diagram_image": result.get("diagram_image","")
             }
-            
-        except Exception as e:
-            self.logger.log_error("agent_run", e)
-            self.logger.logger.error(f"Agent run failed: {str(e)}")
-            return f"Error running agent: {str(e)}"

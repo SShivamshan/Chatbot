@@ -27,6 +27,7 @@ class GraphState(TypedDict):
     pdf_url: Optional[str]
     pdf_category: str
     vector_store_populated: bool
+    sources: Optional[List]
 
 class PDFAgent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -42,8 +43,6 @@ class PDFAgent(BaseModel):
     online_saved: bool = Field(default=False)
     docstore: Optional[Any] = Field(default=None, exclude=True)
     temp_dir: Optional[Any] = Field(default=None, exclude=True)
-    last_offline_file: str = Field(default=None, exclude=True)
-    last_online_url: str = Field(default=None, exclude=True)
     graph_state: Optional[Any] = Field(default=None, exclude=True)
     end_agent:bool = Field(default=True)
 
@@ -59,10 +58,10 @@ class PDFAgent(BaseModel):
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
-        self.end_agent = end_agent
         # Initialize logger
         self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="PDF Agent")
         self.logger.logger.info(f"Initializing PDFAgent with model: {model_name}")
+        self.end_agent = end_agent
 
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
@@ -76,8 +75,6 @@ class PDFAgent(BaseModel):
         self.uploaded_filename = ""
         self.online_saved = False
         self.offline_saved = False
-        self.last_online_url = None
-        self.last_offline_file = None
         self.temp_dir = tempfile.mkdtemp()
         self.logger.logger.info("Code Agent LLM initialized")
         self.graph_state = None
@@ -165,18 +162,21 @@ class PDFAgent(BaseModel):
         except Empty:
             self.logger.error("Queue is empty; no result returned from thread.")
             return None
-    
+
     def populate_vector_store(self,file:str,mode:str=None):
         table_summaries = []
         image_summaries = []
         id_key = "doc_id"
         chunks = []
+
         if mode == "offline":
             chunks = self.tools["pdf_reader"].read_pdf(file)
         if mode == "online":
             chunks = self.tools["pdf_reader"].read_pdf_online(file)
             
         filename = chunks[0].metadata.filename
+        file_hash = get_file_hash(file)  # File hash due to the fact string can change but the hash stays the same
+
         texts,tables,images_64_list = self.tools["pdf_reader"].separate_elements(chunks)
         chunked_texts, _ = split_chuncks(texts,filename=filename)
         
@@ -190,6 +190,8 @@ class PDFAgent(BaseModel):
             del llm_image
 
         if chunked_texts:
+            for doc in chunked_texts:
+                doc.metadata["file_hash"] = file_hash
             self.vectorstore.populate_vector(documents=chunked_texts)
 
         if image_summaries:
@@ -197,7 +199,7 @@ class PDFAgent(BaseModel):
             # First we save the image temporarily
             file_paths = self.run_through_thread(self._save_images,img_base64_list=images_64_list,filename = filename,img_uids= img_ids)
             summary_docs = [
-                Document(page_content=s, metadata={id_key: img_ids[i], "filename":filename})
+                Document(page_content=s, metadata={id_key: img_ids[i], "filename":filename, "file_hash": file_hash})
                         for i, s in enumerate(image_summaries)
             ]
             self.vectorstore.populate_vector(documents=summary_docs)
@@ -206,7 +208,7 @@ class PDFAgent(BaseModel):
         if table_summaries:
             tab_ids = [str(uuid.uuid4()) for _ in tables]
             table_docs = [
-                Document(page_content=s, metadata={id_key: tab_ids[i], "filename":filename})
+                Document(page_content=s, metadata={id_key: tab_ids[i], "filename":filename, "file_hash": file_hash})
                     for i, s in enumerate(table_summaries)
             ]
             self.vectorstore.populate_vector(documents=table_docs)
@@ -216,7 +218,15 @@ class PDFAgent(BaseModel):
         unload_model(logger=self.logger.logger, model_name="nomic-embed-text:latest")
 
         self.logger.logger.info(f"Created the vectorstore for {mode} pdf")
-        
+    
+    def file_already_in_vectordb(self, file_path: str) -> bool:
+        file_hash = get_file_hash(file_path)
+        results = self.vectorstore.collection.get(
+            where={"file_hash": file_hash},
+            limit=1
+        )
+        return len(results["ids"]) > 0
+    
     def create_graph(self):
         """Create a workflow for Code agent operations."""
         self.logger.logger.info("Creating PDF agent workflow graph")
@@ -231,16 +241,16 @@ class PDFAgent(BaseModel):
             
             if "pdf_category" in state and state["pdf_category"] in ["online", "offline", "both"]:
                 if state["pdf_category"] == "online":
-                    if self.last_online_url == state.get("pdf_url", None):
+                    if self.file_already_in_vectordb(state.get("pdf_url", None)):
                         logger.log_node_exit(node_name, state, node_start_time)
                         return state
                 elif state["pdf_category"] == "offline":
-                    if self.last_offline_file == self.uploaded_filename:
+                    if self.file_already_in_vectordb(self.uploaded_filename):
                         logger.log_node_exit(node_name, state, node_start_time)
                         return state
                 elif state["pdf_category"] == "both":
-                    if (self.last_online_url == state.get("pdf_url", None) and 
-                        self.last_offline_file == self.uploaded_filename):
+                    if (self.file_already_in_vectordb(state.get("pdf_url", None)) and 
+                        self.file_already_in_vectordb(self.uploaded_filename)):
                         logger.log_node_exit(node_name, state, node_start_time)
                         return state
 
@@ -265,25 +275,25 @@ class PDFAgent(BaseModel):
 
             mode = state.get("pdf_category")  # "online", "offline", or "both"
             url = state.get("pdf_url", None)
-            updated = False
 
             if mode in ["online", "both"]:
-                if self.last_online_url != url:
+                self.online_saved = self.file_already_in_vectordb(url)
+                if not self.online_saved:
                     self.populate_vector_store(file=url, mode="online")
-                    self.last_online_url = url
-                    self.online_saved = True
-                    updated = True
+                    self.online_saved = True 
 
             if mode in ["offline", "both"]:
-                if self.last_offline_file != self.uploaded_filename:
+                self.offline_saved = self.file_already_in_vectordb(self.uploaded_filename)
+                if not self.offline_saved:
                     self.populate_vector_store(file=self.uploaded_filename, mode="offline")
-                    self.last_offline_file = self.uploaded_filename
                     self.offline_saved = True
-                    updated = True
+
+            # Mark populated if updated or if files already exist
+            vector_store_populated = self.online_saved or self.offline_saved
 
             updated_state = {
                 **state,
-                "vector_store_populated": updated or self.online_saved or self.offline_saved,
+                "vector_store_populated": vector_store_populated
             }
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
@@ -364,7 +374,7 @@ class PDFAgent(BaseModel):
             # We now retrieve the values from the state
             response = state["answer_dict"]
             # THe final answer is a string containig the explanation 
-            updated_state = {**state,"final_answer":response["response"]}
+            updated_state = {**state,"final_answer":response["response"],"sources":response["context"]}
             logger.log_node_exit(node_name, updated_state, node_start_time)
 
             return updated_state
@@ -416,7 +426,7 @@ class PDFAgent(BaseModel):
         """Run the agent with the given query, preserving state."""
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running PDFAgent with query: {query}")
-
+        result = None
         try:
             executor = self.initialize_agent()
             
@@ -452,7 +462,7 @@ class PDFAgent(BaseModel):
             # Step 5: Return final answer
             trimmed_result = {
                 "final_answer": result.get("final_answer"),
-                "answer_dict": result.get("answer_dict")
+                "sources": result.get("sources")
             }
         except Exception as e:
             self.logger.log_error("agent_run", e)

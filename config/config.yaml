@@ -164,14 +164,13 @@ Prompt_templates:
         - Consider technical, contextual, and exploratory angles
         - Avoid redundancy
         
+        <|start_header_id|>user<|end_header_id|>
         Original Question: {question}
         
-        Query Variations:
+        <|start_header_id|>assistant<|end_header_id|> 
 
         <|eot_id|>
         <|end_of_text|>
-
-        <|start_header_id|>assistant<|end_header_id|>
         
       input_variables:
         - name: question
@@ -195,20 +194,36 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are the Supervisor Agent. Your task is to identify and route the user query to the most appropriate sub-agent.
+        You are the Supervisor Agent. Your task is to analyze the user query and route it to the most appropriate sub-agent.
 
-        Your responsibilities are:
-        1. Analyze the user's query.
-        2. **Only one sub-agent can be selected per query.**
-        3. Always return a valid JSON object using the schema shown below—**no extra text** should be included. 
-        4. Identify the most appropriate agent category. 
+        Responsibilities:
+        1. Read and understand the user's query.
+        2. Select exactly **one** sub-agent for the task.
+        3. Return only a valid JSON object following the schema shown below—no extra text or explanations.
 
         Available Sub-Agents:
-        - **WebAgent**: For queries requiring up-to-date or real-time information from the internet (e.g., “What are the latest advancements in quantum computing?”) or For extracting specific data or general information from a user-provided URL (e.g., “Scrape the current stock price from finance.yahoo.com”, “ What are they talking about in this web page: finance.yahoo.com” ).
-        - **KBAgent**: For answering factual, historical, or conceptual questions using internal knowledge or the vector database (e.g., “Who developed the theory of relativity?”).
-        - **CodeAgent**: For writing, analyzing, or executing programming-related content (e.g., “Write a Python script to sort a list”).
-        - **PDFAgent**: For interpreting the contents of a provided PDF file (e.g., “Summarize the key points in /docs/ML_Research_Paper.pdf”).
-                
+        - **AgenticRAG**: 
+            - For interpreting and extracting information from PDFs (uploaded or online).
+            - For retrieving, interpreting, or summarizing the contents of a provided web page or other online resources.
+            - For obtaining up-to-date or real-time information from the internet.
+            - Examples:  
+                - “Summarize the key points in the uploaded PDF file.”  
+                - “Summarize the article at https://openaccess.thecvf.com/content/ICCV2023/papers/Wu_Towards_Universal_LiDAR-Based_3D_Object_Detection_by_Multi-Domain_Knowledge_Transfer_ICCV_2023_paper.pdf.”  
+                - “Get the latest advancements in quantum computing.”  
+                - “What does this web page say: finance.yahoo.com.”  
+
+        - **KBAgent**:  
+            - For answering factual, historical, or conceptual questions using internal knowledge or a vector database.  
+            - Examples:  
+                - “Who developed the theory of relativity?”  
+                - “Explain how photosynthesis works.”  
+
+        - **CodeAgent**:  
+            - For writing, analyzing, or executing programming-related content.  
+            - Examples:  
+                - “Write a Python script to sort a list.”  
+                - “Explain what this JavaScript function does.”
+
         <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
 
@@ -236,7 +251,7 @@ Agent_templates:
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["WebAgent", "CodeAgent", "PDFAgent", "KBAgent"]
+                "enum": ["CodeAgent", "AgenticRAG", "KBAgent"]
               }
             },
             "agent_confidence": {
@@ -396,31 +411,47 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping and return it with the JSON object given down below. 
-        
-        - If `query_type` is **"web_search"**, prioritize **broad but relevant keywords** with synonyms and related terms to ensure optimal search engine retrieval.  
-        - If `query_type` is **"web_scrape"**, prioritize **precise keywords** that help locate structured(sections, information, figures) data from specific sources, like research papers, company websites, or databases.  
+        You are an AI assistant specialized in extracting **precise and optimized keywords** for web search and web scraping, incorporating academic search refinement techniques. Return results as the JSON object below. 
 
-        Additional instructions: 
-          - If query_type is "web_search": 
-            - Prioritize broad but relevant keywords, including synonyms and related terms for better retrieval across search engines.
-            - Append filetype filters (e.g., filetype:pdf, filetype:html) to relevant keyword phrases if the query suggests looking for documents, research, or technical content.
-              Example: "machine learning introduction filetype:pdf"
-            - Use correct search engine syntax — especially filetype:pdf and other search engine syntaxes.
+        If `query_type` is **"web_search"**:
+          - Prioritize **broad but relevant keywords** with synonyms, related terms, and academic modifiers for optimal retrieval.
+          - Incorporate **structured combinations** such as:
+            - Exact phrases with quotes (e.g., "LiDAR-camera fusion").
+            - Plus-joined terms for concept linking (e.g., "LiDAR camera fusion" + "trajectory prediction").
+            - Boolean operators (AND, OR, NOT) where relevant.
+            - Year filters (e.g., 2025) for recent studies.
+            - Journal, conference, or repository names (e.g., arXiv, Sensors, SPIE).
+            - Wildcards or root forms in databases that support them (e.g., LiDAR* camera* fusion*).
+          - Append filetype filters for documents/research (e.g., filetype:pdf, filetype:html).
+          - Include relevant research attributes (robust, lightweight, real-time, trajectory, reliability, configuration, survey, SLAM).
 
-          If query_type is "web_scrape":
-            - Focus on precise, specific keywords to target structured or narrowly defined content from web pages, research portals, company sites, or databases.
-            - Avoid filetype filters for scraping — they are irrelevant for DOM-based extraction.
-        
-        General: 
-        - **Remove unnecessary words** (e.g., "what is," "explain," "tell me about").  
-        - **Include synonyms or related terms** for better accuracy.  
-        - Avoid natural language sentences — return only search-efficient keywords or phrases meant for search engines.
-        - A maximum of such keywords. 
+        If `query_type` is **"web_scrape"**:
+          - Focus on **precise, targeted keywords** for locating structured or narrowly defined content from specific sources.
+          - Avoid filetype filters.
+          - Retain exact academic phrases and modifiers (e.g., “reliability-driven LiDAR camera fusion”, “sensor configuration LiDAR camera fusion”).
+          - Include variations that match section headings or figure captions in research articles.
 
-        Example Output format:
-        - For a **web search** query like "Lidar camera detection", return `["Lidar camera detection filetype:pdf", "Lidar sensor detection filetype:html", 3D imaging Lidar systems filetype:pdf]`  
-        - For a **web scraping** query like "Recent research on LiDAR sensors", return `["LiDAR sensor detection", "LiDAR sensor technology", "Recent LiDAR research findings"]`  
+        General Rules:
+          - **Remove unnecessary natural language words** (e.g., "what is", "explain").
+          - Return only search-efficient keywords or phrases — no full sentences.
+          - Include synonyms or related terms for coverage.
+          - Maximum of 4 keyword strings.
+
+        Example Output:
+        - For `query_type = "web_search"` with user query "Lidar camera detection":
+          ["LiDAR camera detection filetype:pdf", 
+          "LiDAR sensor detection filetype:html", 
+          "\"LiDAR-camera fusion\" + \"3D object detection\" filetype:pdf", 
+          "\"LiDAR camera fusion\" + SLAM filetype:pdf", 
+          "\"LiDAR camera fusion\" + survey + 2025 filetype:pdf"]
+
+        - For `query_type = "web_scrape"` with user query "Recent research on LiDAR sensors":
+          ["LiDAR sensor detection", 
+          "LiDAR sensor technology", 
+          "Recent LiDAR research findings", 
+          "\"reliability-driven LiDAR camera fusion\"", 
+          "\"sensor configuration\" + \"camera LiDAR fusion\""]
+
 
         <|start_header_id|>user<|end_header_id|>
         Query to analyze: {query}  
@@ -608,10 +639,22 @@ Agent_templates:
           ]
         }}
         ```
-        
+
+        <|start_header_id|>user<|end_header_id|>
         Now analyze this query and return ONLY the JSON response format:
-        
+
         **Query to analyze:** {query}
+
+        <|start_header_id|>assistant<|end_header_id|>
+        Return only a JSON object with the following schema:  
+        ```json
+        {{
+          "steps": string[]
+        }}
+        ``` 
+        <|eot_id|>
+
+        <|end_of_text|>
 
       input_variables:
         - name: query
@@ -761,6 +804,8 @@ Agent_templates:
         }}
         ```
         <|start_header_id|>user<|end_header_id|>
+        **Previous code:** {chat_history}
+
         Now implement the code for the following task:
 
         **Task:** {query}
@@ -781,6 +826,9 @@ Agent_templates:
           is_required: true
         - name: steps_text
           description: A list of detailed implementation steps.
+          is_required: true
+        - name: chat_history
+          description: The previous generated code
           is_required: true
 
     Code_correction_template:
@@ -1075,14 +1123,15 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an expert in the field of **{domain}**, with specialized knowledge in **{subdomain}**. Your task is to answer the following user query clearly and accurately. 
-        Return only a JSON object with the following structure:
-        - **answer**: A concise and informative response to the query. Summarize each linked article in 2-5 sentences to explain how it relates to the query.
-        - **title**: A title for the each linked article. 
+        You are an expert in the field of **{domain}**, with specialized knowledge in **{subdomain}**.  
+        Your task is to answer the following user query clearly and accurately, utilizing the context from the **conversation history** if given: {chat_history}.
+
+        Return only a JSON object with the following structure:  
+        - **answer**: A concise and informative response to the query. Summarize each linked article in 2-5 sentences, explaining how it relates to the query.  
+        - **title**: A list of titles for each linked article.  
         - **url**: A list of URLs relevant to the response.
 
-        Respond only with a valid JSON object. Do not include any explanations or formatting outside of the JSON.
-
+        Respond strictly with a valid JSON object. Do not include any explanations, additional formatting, or text outside of the JSON.
 
         <|start_header_id|>user<|end_header_id|>
         {query}
