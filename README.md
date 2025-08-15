@@ -157,11 +157,11 @@ Example :   `` python -m ntlk.downloader punk_tab ``
 
 1. Right now the pdf can only be added one by one and can only render one pdf at the time. Tried to use st.tabs to render the pdf per tabs but only the first tab is getting rendered. 
 2. Takes some time to chunks the pdf when using unstructured module especially true when retreiving tables and images. 
-3. Perhaps add some javascript components. 
+3. Perhaps add some javascript components to create a better render. 
 4. Improvements linked to constrained environments. 
 5. Possibly adding docker support 
 6. Possibility of adding the configuration to interact with google applications especially for code like a sandbox application where we could run a test file.  
-7. For now, the webagent only does a summary of all the retrieved urls but further improvement can be done by using scraping and diving deep onto further enhancing the answer. 
+7. The agents's graphstate/logs inside the app get's updated through a primitive approach but could be enhanced. 
 8. Modular Coding Agent Architecture : To improve the structure and performance of the coding agent, consider dividing it into three specialized sub-agents, each with a distinct responsibility:
 
     - Research Agent: This agent is responsible for researching the problem domain. It can also explore and analyze the folder and file structure to gather relevant context before any coding begins.

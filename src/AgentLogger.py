@@ -14,19 +14,19 @@ class AgentLogger:
     """
     A logging utility for tracking and displaying Agent workflow steps and state.
     """
-    
     def __init__(self, log_level=logging.INFO, console_output=True, file_output=False, 
-                 log_file="agent_logs.log", pretty_print=True, Agent_name:str = "Supervisor Agent",record:bool=False):
+                 log_file="agent_logs.log", pretty_print=True, Agent_name="Supervisor Agent", record=False):
         """
         Initialize the logger with desired output formats.
-        
-        params:
-            log_level: The minimum logging level to record
-            console_output: Whether to output logs to console
-            file_output: Whether to output logs to a file
-            log_file: Name of the log file if file_output is True
-            pretty_print: Whether to use Rich for formatted console output
-            Agent_name: Defines the agent's name that's been run
+
+        Args:
+            log_level: Minimum logging level to record.
+            console_output: Whether to output logs to the console.
+            file_output: Whether to also log to a file.
+            log_file: Name of the log file if file_output is True.
+            pretty_print: Whether to use Rich for formatted console output.
+            Agent_name: Name of the agent for display in logs.
+            record: If True, store logs so they can be exported as HTML.
         """
         self.log_level = log_level
         self.console_output = console_output
@@ -34,32 +34,42 @@ class AgentLogger:
         self.log_file = log_file
         self.pretty_print = pretty_print
         self.agent_name = Agent_name
-        
-        # Initialize logger
+        self.record = record
+
+        # Create logger
         self.logger = logging.getLogger("AgentLogger")
         self.logger.setLevel(self.log_level)
-        self.logger.handlers = []  # Clear any existing handlers
-        
+        self.logger.handlers.clear()
+
+        # Console handler setup
         if self.console_output:
             if self.pretty_print:
-                self.console = Console(record=record)
-                console_handler = RichHandler(rich_tracebacks=True, console=self.console)
+                # If recording for HTML, store the same console used by RichHandler
+                self.console = Console(record=self.record)
+                console_handler = RichHandler(
+                    rich_tracebacks=True,
+                    console=self.console,
+                    markup=True,
+                    show_path=False
+                )
             else:
+                # Plain text output
+                self.console = None  # Not needed for plain logs
                 console_handler = logging.StreamHandler()
                 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
                 console_handler.setFormatter(formatter)
-            
+
             console_handler.setLevel(self.log_level)
             self.logger.addHandler(console_handler)
-        
-        # File handler if enabled
+
+        # File handler setup
         if self.file_output:
             file_handler = logging.FileHandler(self.log_file)
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             file_handler.setFormatter(formatter)
             file_handler.setLevel(self.log_level)
             self.logger.addHandler(file_handler)
-        
+
         # Metrics tracking
         self.metrics = {
             "start_time": None,
@@ -70,6 +80,18 @@ class AgentLogger:
             "steps_completed": 0,
             "node_count": {}
         }
+
+    def export_html(self):
+        """Export recorded logs as HTML if record=True."""
+        if self.record and hasattr(self, "console") and self.console:
+            return self.console.export_html(clear=False)
+        else:
+            return "<p>No HTML logs recorded (set record=True when initializing)</p>"
+
+    def clear_logs(self):
+        """Clear the stored Rich logs if record=True."""
+        if self.record and hasattr(self, "console") and self.console:
+            self.console.clear()
     
     def format_state(self, state: Dict[str, Any], truncate_length: int = 500) -> str:
         """Format GraphState for better readability."""
@@ -280,6 +302,18 @@ class AgentLogger:
             self.logger.info(f"Node sequence: {' → '.join(self.metrics['node_sequence'])}")
             self.logger.info(f"Final answer: {final_result.get('final_answer', 'No answer generated.')}")
 
+    def export_html(self):
+        """Export recorded logs as HTML if record=True."""
+        if self.record and hasattr(self, "console") and self.console:
+            return self.console.export_html(clear=False)
+        else:
+            return "<p>No HTML logs recorded (set record=True when initializing)</p>"
+
+    def clear_logs(self):
+        """Clear the stored Rich logs if record=True."""
+        if self.record and hasattr(self, "console") and self.console:
+            self.console.clear()
+            
 # Decorator for instrumenting Agent class methods
 def log_method(logger):
     def decorator(func):

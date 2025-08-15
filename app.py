@@ -64,6 +64,8 @@ class ChatbotApp:
             st.session_state.llm_instances = {}
         if "parent_directory" not in st.session_state:
             st.session_state.parent_directory = "images/img_output"
+        if "agent_running" not in st.session_state:
+            st.session_state.agent_running = False
 
         self.messages_loaded = False
         self.current_page = "account"
@@ -129,6 +131,7 @@ class ChatbotApp:
                             "filename" : pdf_filename if chat_type == 2 else None,
                             "last_saved_index": len(message_deque) - 1,  # Mark all loaded messages as saved
                             "from_history": set(range(len(message_deque))),  # Mark all message indices as from history
+                            "sources": None # These will be the sources if agent gives out. 
                         }
                     if pdf_ref:
                         st.session_state.sessions[chat]["saved"] = True
@@ -153,7 +156,8 @@ class ChatbotApp:
                 "messages": deque(),
                 "last_saved_index": -1,
                 "chat_type": chat_type,
-                "file_hash" : None # This will keep the 
+                "file_hash" : None, # This will keep the file
+                "sources": None # These will be the sources if agent gives out.  
             }
             st.session_state.current_session_id = new_session_id
             st.session_state.active_page = "chat"  # Set active page to "chat"
@@ -516,6 +520,9 @@ class ChatbotApp:
         elif session_id and  chat_type == 1: # Agent section    
             agent_col1, agent_col2 = st.columns([5, 5], gap="large") 
             uploaded_file = None
+
+            self.chatbot = self.get_or_create_llm(chat_type, session_id)
+
             with agent_col1:
 
                 uploaded_file = st.file_uploader("Choose a PDF file") # accept_multiple_files=True
@@ -537,13 +544,92 @@ class ChatbotApp:
                     top_container = st.container(height=800, key=container_key)
                     with top_container:
                         st.markdown("### Agent Logs & Graph")
+                        log_placeholder = st.empty()
+
+                        with log_placeholder:
+                            st.html(self.chatbot.logger.export_html())
+                        
+                        if hasattr(st.session_state, 'agent_running') and st.session_state.agent_running:
+                            time.sleep(1)
+                            st.rerun()
 
                 with tabs[1]:
                     container_key = f"info_container_agent_{session_id}_results"
                     bottom_container = st.container(height=800, key=container_key)
                     with bottom_container:
                         st.markdown("### Agent Results")
+                        if session["sources"]:
+                            for res in session["sources"]:
+                                # Limit content to 80 words if it exists
+                                content_preview = ""
+                                if res.get('content'):
+                                    words = res['content'].split()
+                                    if len(words) > 80:
+                                        content_preview = ' '.join(words[:80]) + "..."
+                                    else:
+                                        content_preview = res['content']
+                                elif res.get('description'):
+                                    words = res['description'].split()
+                                    if len(words) > 80:
+                                        content_preview = ' '.join(words[:80]) + "..."
+                                    else:
+                                        content_preview = res['description']
+                                        
+                                title = res.get('title')  # try to get real title first
+                                if not title and res.get('description'):  # fallback to default Image N
+                                    index = res.get('index', 1)  # you can pass index in your data
+                                    title = f"Image {index}"
 
+                                content_html = ""
+                                if content_preview != "":  # only include if not None or empty
+                                    content_html = f'''
+                                    <p style="
+                                        color: #64748b;
+                                        font-size: 14px;
+                                        line-height: 1.6;
+                                        margin: 8px 0 12px 0;
+                                        text-align: justify;
+                                    ">{content_preview}</p>
+                                    '''
+                                
+                                st.markdown(
+                                    f"""
+                                    <a href="{res['url']}" target="_blank" style="text-decoration: none; color: inherit;">
+                                        <div style="
+                                            border: none;
+                                            padding: 20px;
+                                            border-radius: 12px;
+                                            margin-bottom: 16px;
+                                            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+                                            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+                                            transition: transform 0.2s ease, box-shadow 0.2s ease;
+                                            cursor: pointer;
+                                        "
+                                        onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 12px -1px rgba(0, 0, 0, 0.4), 0 4px 8px -1px rgba(0, 0, 0, 0.3)';"
+                                        onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)';"
+                                        >
+                                            <div style="
+                                                text-decoration: none;
+                                                color: #ffffff;
+                                                font-size: 18px;
+                                                font-weight: 600;
+                                                line-height: 1.4;
+                                                display: flex;
+                                                align-items: center;
+                                                margin-bottom: 8px;
+                                                pointer-events: none;
+                                            ">
+                                                <img src="https://www.google.com/s2/favicons?sz=32&domain_url={res['url']}"
+                                                    style="width: 20px; height: 20px; margin-right: 8px; border-radius: 4px;">
+                                                {title}
+                                            </div>
+                                            {content_html}
+                                        
+                                    </a>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+                                # Use of https://www.google.com/s2/favicons?sz=32&domain to retrieve the url's icon(logo)
                 with tabs[2]:
                     container_key = f"info_container_agent_{session_id}_pdf"
                     pdf_container = st.container(height=800, key=container_key)
@@ -625,8 +711,7 @@ class ChatbotApp:
             llm = ConversationChain(llm=chatbot, memory=memory)
             return llm
         elif chat_type == 1: # AGENT
-            # Handle other chat types here
-            llm = None
+            llm = WebAgent(chatbot=chatbot,record=True)
             return llm
           
     def handle_input(self,chat_type : int = 0, container = None):
@@ -691,8 +776,28 @@ class ChatbotApp:
                     st.session_state.sessions[st.session_state.current_session_id]["last_saved_index"] = -1
 
                 # flag, query = parse_flags_and_queries(input_text=user_input)
-                # Verification phase for the flags and their sub flags if given 
                 session["messages"].append({"User": user_input})
+
+                # Display user message 
+                with container.chat_message("user"):
+                    st.markdown(user_input)
+                try:
+                    with st.spinner("Agent Thinking........"):
+                        st.session_state.agent_running = True
+                        response = self.chatbot.run(query=user_input)
+                        session["messages"].append({"AI": response["final_answer"]})
+                        session["sources"] = response["sources"] if response.get("sources", None) else None 
+
+                        with container.chat_message("ai"):
+                            st.markdown(response["final_answer"])
+                        self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
+
+                        # Reset the logger after the agent run 
+                        self.chatbot.logger.clear_logs()
+                        st.session_state.agent_running = False
+                except Exception as e:
+                        self.logger.error("An error occured: {e}")
+                        st.error(f"An error occurred: {e}")     
 
     @st.dialog(title="Session message")
     def popover_messages(self,message:str,msg_type:Literal["ERROR", "WARNING","INFO"] = str) : 
@@ -999,6 +1104,7 @@ class ChatbotApp:
         except Empty:
             self.logger.error("Queue is empty; no result returned from thread.")
             return None
+        
     def unload_all_models(self):
         """Unload all loaded models when the app closes."""
         if "llm_instances" in st.session_state:
@@ -1016,6 +1122,7 @@ class ChatbotApp:
                         instances.llm.unload_model()
 
         self.logger.info("All models have been unloaded from memory.")
+
     def run(self):
         """Run the application."""
         active_page = st.session_state.get("active_page", "account")  # Default to "account" page

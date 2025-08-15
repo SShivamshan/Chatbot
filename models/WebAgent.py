@@ -38,6 +38,7 @@ class WebAgent(BaseModel):
     logger: Optional[Any] = Field(default=None, exclude=True)
     memory:Optional[Any] = Field(default=None,exclude=True)
     end_agent:bool = Field(default=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -47,12 +48,13 @@ class WebAgent(BaseModel):
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
         pretty_print: bool = True,
-        end_agent:bool = True
+        end_agent:bool = True,
+        record: bool = False
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent")
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent",record=record)
         self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
         self.end_agent = end_agent
 
@@ -316,13 +318,10 @@ class WebAgent(BaseModel):
                 Previous conversation:
                 {history_text}
 
-                Current query:
-                {state['query']}
-
                 Search Results:
                 {result_text}
 
-                Based on the previous conversation and the current search results, provide a comprehensive answer.
+                Based on the previous conversation and the current search results, provide a comprehensive answer to the given query: {state['query']}.
                 """
 
                 final_answer = self.llm.invoke(prompt)

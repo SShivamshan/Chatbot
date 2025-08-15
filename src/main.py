@@ -2,8 +2,7 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-# Now we need add the entier process to the app start with Webagent then go to the rest and also need to rich.console.Console(record=True) and console.export_html() these to render on streamlit
-# Test entier process altogether
+# Finish PDF and COde agent integration test and followed by agentic rag and superviosor agent and then prepare a method to show sources appropriately based on the answers
 # Add The llm handler to the app and test 
 # Add teh method to use properly the agent through cmd using run_agent.py 
 

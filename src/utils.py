@@ -328,10 +328,10 @@ class CustomSearchTool(BaseTool):
             include_image_descriptions=True
         )
 
-    def summarize_content(self,result:dict,max_words:int = 500):
+    def summarize_content(self,result:dict,query:str,max_words:int = 500):
         summarize_template = """
         You are an expert summarizer.
-        Summarize the following content into a clear, and accurate summary.
+        Summarize the following content into a clear, accurate, and concise summary, highlighting its relevance to the query.: {query}
 
         Content:
         {content}
@@ -354,13 +354,13 @@ class CustomSearchTool(BaseTool):
 
         result = None
         if content != "":
-            result = self.llm.invoke(summary_prompt.format(content = content, max_words = max_words)).content
+            result = self.llm.invoke(summary_prompt.format(content = content, query=query,max_words = max_words)).content
         else:
             result = "No content available for this search result"
 
         return result
 
-    def format_tavily_response(self, raw_response: dict):
+    def format_tavily_response(self, raw_response: dict,query:str):
         """
         Format travily response for the llm usage
         """
@@ -369,7 +369,7 @@ class CustomSearchTool(BaseTool):
             {
                 "title": result.get("title"),
                 "url": result.get("url"),
-                "content": self.summarize_content(result)
+                "content": self.summarize_content(result,query=query)
             }
             for result in raw_response.get("results", [])
             if result.get("score", 0) > 0.60
@@ -392,7 +392,7 @@ class CustomSearchTool(BaseTool):
         if isinstance(query, list):
             for single_query in query:
                 search_results = self.web_search_tool.invoke({"query": single_query})
-                formatted_search_results = self.format_tavily_response(search_results)
+                formatted_search_results = self.format_tavily_response(search_results,query=single_query)
                 # print(f"search results in tool call: {formatted_search_results}")
                 results.append(formatted_search_results)
         else:

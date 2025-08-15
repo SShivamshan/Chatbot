@@ -435,23 +435,49 @@ Agent_templates:
           - **Remove unnecessary natural language words** (e.g., "what is", "explain").
           - Return only search-efficient keywords or phrases — no full sentences.
           - Include synonyms or related terms for coverage.
-          - Maximum of 4 keyword strings.
+          - Maximum of 3 keyword strings.
 
-        Example Output:
-        - For `query_type = "web_search"` with user query "Lidar camera detection":
-          ["LiDAR camera detection filetype:pdf", 
-          "LiDAR sensor detection filetype:html", 
-          "\"LiDAR-camera fusion\" + \"3D object detection\" filetype:pdf", 
-          "\"LiDAR camera fusion\" + SLAM filetype:pdf", 
-          "\"LiDAR camera fusion\" + survey + 2025 filetype:pdf"]
+        Few-Shot example Output:
+        - For `query_type = "web_search"` with user query "recent advancement in LiDAR camera detection":
+        Output: 
+        ```json
+        {{
+          "keywords": ["LiDAR camera detection filetype:pdf", "LiDAR perception + autonomous vehicles + recent filetype:html", "\"LiDAR-camera fusion\" + \"3D object detection\" + review filetype:pdf"]
+        }}
+        ```
+
+        - For `query_type = "web_search"` with user query "machine learning in healthcare":
+        Output: 
+        ```json
+        {{
+          "keywords": [
+              "machine learning healthcare applications 2025 filetype:pdf",
+              "\"ML + medical diagnosis\" + recent research filetype:pdf",
+              "AI + healthcare analytics + review filetype:html"]
+        }}
+        ```
 
         - For `query_type = "web_scrape"` with user query "Recent research on LiDAR sensors":
-          ["LiDAR sensor detection", 
-          "LiDAR sensor technology", 
-          "Recent LiDAR research findings", 
-          "\"reliability-driven LiDAR camera fusion\"", 
-          "\"sensor configuration\" + \"camera LiDAR fusion\""]
+        Output: 
+        ```json
+        {{
+          "keywords":  ["Recent LiDAR research findings", 
+                        "\"reliability-driven LiDAR camera fusion\"", 
+                        "\"sensor configuration\" + \"camera LiDAR fusion\""]
+        }}
+        ``` 
 
+        - For `query_type = "web_scrape"` with user query "Recent research on LiDAR sensors":
+        Output: 
+        ```json
+        {{
+          "keywords": [
+                        "deep learning medical image analysis",
+                        "\"CNN + medical diagnosis\" + review",
+                        "AI + medical imaging + segmentation techniques"
+                      ]
+        }}
+        ```
 
         <|start_header_id|>user<|end_header_id|>
         Query to analyze: {query}  
@@ -1127,7 +1153,7 @@ Agent_templates:
         Your task is to answer the following user query clearly and accurately, utilizing the context from the **conversation history** if given: {chat_history}.
 
         Return only a JSON object with the following structure:  
-        - **answer**: A concise and informative response to the query. Summarize each linked article in 2-5 sentences, explaining how it relates to the query.  
+        - **answer**: An elabortate, consice and informative response to the query. Always summarize each linked article in 3-5 sentences, explaining how it relates to the query.  
         - **title**: A list of titles for each linked article.  
         - **url**: A list of URLs relevant to the response.
 

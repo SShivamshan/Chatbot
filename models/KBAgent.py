@@ -27,6 +27,7 @@ class KBAgent(BaseModel):
     logger: Optional[Any] = Field(default=None, exclude=True)
     memory:Optional[Any] = Field(default=None,exclude=True)
     end_agent:bool = Field(default=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -36,10 +37,11 @@ class KBAgent(BaseModel):
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
         pretty_print: bool = True,
-        end_agent:bool = True
+        end_agent:bool = True,
+        record: bool = False
     ):
         super().__init__()
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Knowledge Base Agent")
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Knowledge Base Agent",record=record)
         self.logger.logger.info(f"Initializing Knowledge Base agent with model: {model_name}")
         self.end_agent = end_agent
         # Initialize LLM
@@ -48,7 +50,7 @@ class KBAgent(BaseModel):
             model=model_name,
             context_length=context_length
         )
-        self.logger.logger.info("Web Agent LLM initialized")
+        self.logger.logger.info("Knowledge Agent LLM initialized")
         
         DOMAIN_CONTEXT_PROMPT = self._create_template(template_name="Domain_context_template")
         self.domain_context = DOMAIN_CONTEXT_PROMPT | self.llm | JsonOutputParser()
