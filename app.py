@@ -30,6 +30,7 @@ from models.WebAgent import WebAgent
 from models.AgenticRAG import AgenticRAG
 from models.CodeAgent import CodeAgent
 from models.KBAgent import KBAgent
+from models.SupervisorAgent import SupervisorAgent
 
 from pages.home import HomePage
 from pages.chat import ChatPage
@@ -524,7 +525,6 @@ class ChatbotApp:
             self.chatbot = self.get_or_create_llm(chat_type, session_id)
 
             with agent_col1:
-
                 uploaded_file = st.file_uploader("Choose a PDF file") # accept_multiple_files=True
                 container_key = f"chat_container_agent_{session_id}"
                 agent_message_container = st.container(height=800 ,key=container_key)
@@ -532,7 +532,7 @@ class ChatbotApp:
                     st.markdown("### Chat")
                     # Display existing messages
                     self.display_messages(session["messages"], container=agent_message_container)
-                self.handle_input(chat_type=chat_type, container=agent_message_container)
+                self.handle_input(chat_type=chat_type, container=agent_message_container,filename=uploaded_file)
 
             with agent_col2:  # Reference and other information showing area updated each time 
                 # Split into two stacked containers
@@ -548,10 +548,6 @@ class ChatbotApp:
 
                         with log_placeholder:
                             st.html(self.chatbot.logger.export_html())
-                        
-                        if hasattr(st.session_state, 'agent_running') and st.session_state.agent_running:
-                            time.sleep(1)
-                            st.rerun()
 
                 with tabs[1]:
                     container_key = f"info_container_agent_{session_id}_results"
@@ -560,76 +556,218 @@ class ChatbotApp:
                         st.markdown("### Agent Results")
                         if session["sources"]:
                             for res in session["sources"]:
-                                # Limit content to 80 words if it exists
-                                content_preview = ""
-                                if res.get('content'):
-                                    words = res['content'].split()
-                                    if len(words) > 80:
-                                        content_preview = ' '.join(words[:80]) + "..."
-                                    else:
-                                        content_preview = res['content']
-                                elif res.get('description'):
-                                    words = res['description'].split()
-                                    if len(words) > 80:
-                                        content_preview = ' '.join(words[:80]) + "..."
-                                    else:
-                                        content_preview = res['description']
-                                        
-                                title = res.get('title')  # try to get real title first
-                                if not title and res.get('description'):  # fallback to default Image N
-                                    index = res.get('index', 1)  # you can pass index in your data
-                                    title = f"Image {index}"
-
-                                content_html = ""
-                                if content_preview != "":  # only include if not None or empty
-                                    content_html = f'''
-                                    <p style="
-                                        color: #64748b;
-                                        font-size: 14px;
-                                        line-height: 1.6;
-                                        margin: 8px 0 12px 0;
-                                        text-align: justify;
-                                    ">{content_preview}</p>
-                                    '''
                                 
-                                st.markdown(
-                                    f"""
-                                    <a href="{res['url']}" target="_blank" style="text-decoration: none; color: inherit;">
-                                        <div style="
-                                            border: none;
-                                            padding: 20px;
-                                            border-radius: 12px;
-                                            margin-bottom: 16px;
-                                            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-                                            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-                                            transition: transform 0.2s ease, box-shadow 0.2s ease;
-                                            cursor: pointer;
-                                        "
-                                        onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 12px -1px rgba(0, 0, 0, 0.4), 0 4px 8px -1px rgba(0, 0, 0, 0.3)';"
-                                        onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)';"
-                                        >
-                                            <div style="
-                                                text-decoration: none;
-                                                color: #ffffff;
-                                                font-size: 18px;
-                                                font-weight: 600;
-                                                line-height: 1.4;
-                                                display: flex;
-                                                align-items: center;
-                                                margin-bottom: 8px;
-                                                pointer-events: none;
-                                            ">
-                                                <img src="https://www.google.com/s2/favicons?sz=32&domain_url={res['url']}"
-                                                    style="width: 20px; height: 20px; margin-right: 8px; border-radius: 4px;">
-                                                {title}
-                                            </div>
-                                            {content_html}
+                                if res["agent"] == "both_agents": # Typically means we have a full agentic rag(PDF+WEB)
+                                    st.markdown("#### 🤖 Combined Results (PDF + Web)")
+                                    sources = res.get('content')
+
+                                    for source in sources:
+                                        if "texts" in list(source.keys()):
+                                            filename = source["texts"][0].metadata.get("filename", "Unknown")
+                                            st.markdown(f"##### 📄 PDF Source: {filename}")
+
+                                            for doc in source["texts"]:
+                                                with st.expander(f"Page {doc.metadata.get('page')} - {filename}"):
+                                                    st.markdown(f"**Confidence Score:** `{doc.metadata.get('score'):.2f}`")
+                                                    st.markdown("---")
+                                                    st.write(doc.page_content)
+
+                                            if source.get("images"):
+                                                st.markdown("🖼️ Extracted Images:")
+                                                for img in source["images"]:
+                                                    image_data = self.pdf_reader.base64_to_image(img)
+                                                    st.image(image_data, caption=f"Image from {filename}", use_container_width=False)
                                         
-                                    </a>
-                                    """,
-                                    unsafe_allow_html=True
-                                )
-                                # Use of https://www.google.com/s2/favicons?sz=32&domain to retrieve the url's icon(logo)
+                                        elif "url" in list(source.keys()):
+                                            
+                                            content_preview = ""
+                                            if source.get('content'):
+                                                words = source['content'].split()
+                                                if len(words) > 80:
+                                                    content_preview = ' '.join(words[:80]) + "..."
+                                                else:
+                                                    content_preview = source['content']
+                                            elif source.get('description'):
+                                                words = source['description'].split()
+                                                if len(words) > 80:
+                                                    content_preview = ' '.join(words[:80]) + "..."
+                                                else:
+                                                    content_preview = source['description']
+                                                    
+                                            title = source.get('title')  
+                                            if not title and source.get('description'):  # fallback to default Image N
+                                                index = source.get('index', 1)  # you can pass index in your data
+                                                title = f"Image {index}"
+                                            
+                                            content_html = ""
+                                            if content_preview != "":  # only include if not None or empty
+                                                content_html = f'''
+                                                <p style="
+                                                    color: #64748b;
+                                                    font-size: 14px;
+                                                    line-height: 1.6;
+                                                    margin: 8px 0 12px 0;
+                                                    text-align: justify;
+                                                ">{content_preview}</p>
+                                                '''
+                                            
+                                            st.markdown(
+                                                f"""
+                                                <a href="{source['url']}" target="_blank" style="text-decoration: none; color: inherit;">
+                                                    <div style="
+                                                        border: none;
+                                                        padding: 20px;
+                                                        border-radius: 12px;
+                                                        margin-bottom: 16px;
+                                                        background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+                                                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+                                                        transition: transform 0.2s ease, box-shadow 0.2s ease;
+                                                        cursor: pointer;
+                                                    "
+                                                    onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 12px -1px rgba(0, 0, 0, 0.4), 0 4px 8px -1px rgba(0, 0, 0, 0.3)';"
+                                                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)';"
+                                                    >
+                                                        <div style="
+                                                            text-decoration: none;
+                                                            color: #ffffff;
+                                                            font-size: 18px;
+                                                            font-weight: 600;
+                                                            line-height: 1.4;
+                                                            display: flex;
+                                                            align-items: center;
+                                                            margin-bottom: 8px;
+                                                            pointer-events: none;
+                                                        ">
+                                                            <img src="https://www.google.com/s2/favicons?sz=32&domain_url={source['url']}"
+                                                                style="width: 20px; height: 20px; margin-right: 8px; border-radius: 4px;">
+                                                            {title}
+                                                        </div>
+                                                        {content_html}
+                                                    
+                                                </a>
+                                                """,
+                                                unsafe_allow_html=True
+                                            )
+                                                                
+                                if res["agent"] == "pdf_agent": # Meant only for the pdf agent 
+                                    sources = res.get('content')
+                                    filename = sources["texts"][0].metadata.get("filename","Unkown")
+                                    for doc in sources["texts"]:
+                                        with st.expander(f"📄 Page {doc.metadata.get('page')} - {doc.metadata.get('filename')}"):
+                                            st.markdown(f"**Confidence Score:** `{doc.metadata.get('score'):.2f}`")
+                                            st.markdown("---")
+                                            st.write(doc.page_content)
+
+                                    st.markdown(
+                                        """
+                                        <style>
+                                        .custom-image img {
+                                            width: 35% !important;
+                                            height: auto;
+                                            display: block;
+                                            margin-left: auto;
+                                            margin-right: auto;
+                                        }
+                                        </style>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
+                                    if sources.get("images"):
+                                        st.markdown("🖼️ Extracted Images:")
+                                        for img in sources["images"]:
+                                            image_data = self.pdf_reader.base64_to_image(img)
+                                            st.markdown('<div class="custom-image">', unsafe_allow_html=True)
+                                            st.image(image_data, caption=f"Image from the article : {filename}", use_container_width=False)
+                                            st.markdown("</div>", unsafe_allow_html=True)
+
+                                elif res["agent"] in ["web_agent","kb_agent"]: # Web and knowledge based agent. 
+                                    # Limit content to 80 words if it exists
+                                    sources = res.get('content')
+                                    for elements in sources: 
+                                        content_preview = ""
+                                        if elements.get('content'):
+                                            words = elements['content'].split()
+                                            if len(words) > 80:
+                                                content_preview = ' '.join(words[:80]) + "..."
+                                            else:
+                                                content_preview = elements['content']
+                                        elif elements.get('description'):
+                                            words = elements['description'].split()
+                                            if len(words) > 80:
+                                                content_preview = ' '.join(words[:80]) + "..."
+                                            else:
+                                                content_preview = elements['description']
+                                                
+                                        title = elements.get('title')  
+                                        if not title and elements.get('description'):  # fallback to default Image N
+                                            index = elements.get('index', 1)  # you can pass index in your data
+                                            title = f"Image {index}"
+                                        
+                                        content_html = ""
+                                        if content_preview != "":  # only include if not None or empty
+                                            content_html = f'''
+                                            <p style="
+                                                color: #64748b;
+                                                font-size: 14px;
+                                                line-height: 1.6;
+                                                margin: 8px 0 12px 0;
+                                                text-align: justify;
+                                            ">{content_preview}</p>
+                                            '''
+                                        
+                                        st.markdown(
+                                            f"""
+                                            <a href="{elements['url']}" target="_blank" style="text-decoration: none; color: inherit;">
+                                                <div style="
+                                                    border: none;
+                                                    padding: 20px;
+                                                    border-radius: 12px;
+                                                    margin-bottom: 16px;
+                                                    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+                                                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+                                                    transition: transform 0.2s ease, box-shadow 0.2s ease;
+                                                    cursor: pointer;
+                                                "
+                                                onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 12px -1px rgba(0, 0, 0, 0.4), 0 4px 8px -1px rgba(0, 0, 0, 0.3)';"
+                                                onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)';"
+                                                >
+                                                    <div style="
+                                                        text-decoration: none;
+                                                        color: #ffffff;
+                                                        font-size: 18px;
+                                                        font-weight: 600;
+                                                        line-height: 1.4;
+                                                        display: flex;
+                                                        align-items: center;
+                                                        margin-bottom: 8px;
+                                                        pointer-events: none;
+                                                    ">
+                                                        <img src="https://www.google.com/s2/favicons?sz=32&domain_url={elements['url']}"
+                                                            style="width: 20px; height: 20px; margin-right: 8px; border-radius: 4px;">
+                                                        {title}
+                                                    </div>
+                                                    {content_html}
+                                                
+                                            </a>
+                                            """,
+                                            unsafe_allow_html=True
+                                        ) # Use of https://www.google.com/s2/favicons?sz=32&domain to retrieve the url's icon(logo)
+
+                                elif res["agent"] == "code_agent": # Code Agent
+                                    if res["type"] == "code":
+                                        st.markdown(res['content'])
+
+                                    elif res["type"] == "diagram":
+                                        try:
+                                            content = res["content"].encode().decode('unicode_escape')
+                                            st.graphviz_chart(content)
+                                           
+                                        except Exception as e:
+                                            st.error(f"Error rendering diagram: {e}")
+                                            st.code(res["content"], language="dot")
+                                    else:
+                                        st.write(res.get("content", "No content available"))
+
                 with tabs[2]:
                     container_key = f"info_container_agent_{session_id}_pdf"
                     pdf_container = st.container(height=800, key=container_key)
@@ -711,10 +849,10 @@ class ChatbotApp:
             llm = ConversationChain(llm=chatbot, memory=memory)
             return llm
         elif chat_type == 1: # AGENT
-            llm = WebAgent(chatbot=chatbot,record=True)
+            llm = SupervisorAgent(chatbot=chatbot,record=True)
             return llm
           
-    def handle_input(self,chat_type : int = 0, container = None):
+    def handle_input(self,chat_type : int = 0, container = None,filename = None):
         """Handles user input."""
         if chat_type == 0:  # Simple chat
             user_input = st.chat_input(placeholder="Ask me anything...",key="0")
@@ -740,7 +878,7 @@ class ChatbotApp:
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
 
-        elif chat_type == 2:
+        elif chat_type == 2: # RAG
             
             user_input = st.chat_input(placeholder="Ask me anything...",key="2")
             if user_input and st.session_state.current_session_id:
@@ -767,9 +905,9 @@ class ChatbotApp:
                     message = "LLM instance is not created, to do so upload a PDF file"
                     self.popover_messages(message=message,msg_type="WARNING")
         else:
-            # st.markdown("Type `/link`, `/pdf` in the box below to see them highlighted.")
+            # st.markdown("Type `/web`, `/pdf` in the box below to see them highlighted.")
             user_input = st.chat_input(placeholder="Ask me anything...",key="1")
-
+            sources = []
             if user_input and st.session_state.current_session_id:
                 session = st.session_state.sessions[st.session_state.current_session_id]
                 if "last_saved_index" not in st.session_state.sessions[st.session_state.current_session_id]:
@@ -777,24 +915,50 @@ class ChatbotApp:
 
                 # flag, query = parse_flags_and_queries(input_text=user_input)
                 session["messages"].append({"User": user_input})
-
+                final_answer = ""
                 # Display user message 
                 with container.chat_message("user"):
                     st.markdown(user_input)
                 try:
                     with st.spinner("Agent Thinking........"):
-                        st.session_state.agent_running = True
-                        response = self.chatbot.run(query=user_input)
-                        session["messages"].append({"AI": response["final_answer"]})
-                        session["sources"] = response["sources"] if response.get("sources", None) else None 
+                        
+                        results = self.chatbot.run(query=user_input,filename=filename)
+                        for response in list(results.values()):
+                            answer_text = response["final_answer"]
+                            # Add to final_answer with proper spacing
+                            if final_answer:  # If final_answer already has content, add a separator
+                                final_answer += " ".join(answer_text)
+                            else:
+                                final_answer = answer_text
+                            if response.get("sources", None): # Works mostly for webagent, knowledge base agent, pdf_agent separtely
+                                sources.append({
+                                    "agent": response["agent"],
+                                    "content": response["sources"],
+                                })
+                                session["sources"] = sources
+                            else:
+                                if response.get("generated_code"):
+                                    sources.append({
+                                        "agent": response["agent"],
+                                        "content": response["generated_code"],
+                                        "type": "code"
+                                    })
+                                if response.get("diagram_image"):
+                                    sources.append({
+                                        "content": response["diagram_image"],
+                                        "agent": response["agent"],
+                                        "type": "diagram"
+                                    })
+                                session["sources"] = sources 
+                        session["messages"].append({"AI": final_answer})
 
                         with container.chat_message("ai"):
-                            st.markdown(response["final_answer"])
+                            st.markdown(final_answer)
                         self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
 
                         # Reset the logger after the agent run 
                         self.chatbot.logger.clear_logs()
-                        st.session_state.agent_running = False
+                        
                 except Exception as e:
                         self.logger.error("An error occured: {e}")
                         st.error(f"An error occurred: {e}")     

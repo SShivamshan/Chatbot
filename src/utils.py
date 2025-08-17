@@ -881,8 +881,6 @@ class PDFTools(BaseTool):
         if not state:
             self.pdf_state = "offline"
 
-        
-    
     def _arun(self, query: str):
         """
         This tool does not support asynchronous execution.

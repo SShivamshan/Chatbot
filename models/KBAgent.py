@@ -181,5 +181,6 @@ class KBAgent(BaseModel):
                 self.logger.end_agent_run(result)
             return {
                 "final_answer": result.get("final_answer", "No answer generated."),
-                "sources": result.get("sources",[])
+                "sources": result.get("sources",[]),
+                "agent": "kb_agent"
             }

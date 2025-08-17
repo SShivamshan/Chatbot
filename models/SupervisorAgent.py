@@ -19,6 +19,7 @@ class GraphState(TypedDict):
     agent_routes: Optional[List[str]]
     agent_confidence: Optional[float]
     subagent_results: Optional[Dict]
+    filename:str 
 
 class SupervisorAgent(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -28,6 +29,7 @@ class SupervisorAgent(BaseModel):
     llm: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
     agent_routing: Optional[Any] = Field(default=None, exclude=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -36,11 +38,13 @@ class SupervisorAgent(BaseModel):
         context_length: int = 18000,
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
-        pretty_print: bool = True
+        pretty_print: bool = True,
+        record: bool = False
     ):
         super().__init__()
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print)
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,record=record)
         self.logger.logger.info(f"Initializing Supervisor Agent with model: {model_name}")
+        self.record = record
 
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
@@ -69,9 +73,9 @@ class SupervisorAgent(BaseModel):
 
     def initialize_sub_agents(self):
         self.logger.logger.debug("Initializing sub agents")
-        kbagent_tool = KBAgent(chatbot=self.llm,end_agent=False)
-        codeagent_tool = CodeAgent(chatbot=self.llm,end_agent=False)
-        agenticrag_tool = AgenticRAG(chatbot=self.llm,end_agent = False)
+        kbagent_tool = KBAgent(chatbot=self.llm,end_agent=False,record=self.record)
+        codeagent_tool = CodeAgent(chatbot=self.llm,end_agent=False,record=self.record)
+        agenticrag_tool = AgenticRAG(chatbot=self.llm,end_agent = False,record=self.record)
         return {"KBAgent":kbagent_tool,"CodeAgent":codeagent_tool, "AgenticRAG":agenticrag_tool}
 
     def create_graph(self):
@@ -107,18 +111,21 @@ class SupervisorAgent(BaseModel):
                 if route in self.tools:
                     logger.log_tool_call(route, {"query": state.get("query", "")})
 
-                    result = self.tools[route].run(state["query"])
+                    if route == "AgenticRAG":
+                        result = self.tools[route].run(
+                            state["query"],
+                            filename=state.get("filename")   # only pass if available
+                        )
+                    else:
+                        result = self.tools[route].run(state["query"])
+                    
                     subagent_results[route] = result
                 else:
                     logger.logger.warning(f"Unknown tool: {route}")
 
                 logger.log_node_exit(node_name, state, node_start_time)
 
-            # All agents have been processed
-            updated_state = {
-                **state,
-                "subagent_results": subagent_results
-            }
+            updated_state = {**state, "subagent_results": subagent_results}
             return updated_state
 
 
@@ -144,13 +151,23 @@ class SupervisorAgent(BaseModel):
         self.logger.logger.info("Compiling agent workflow graph")
         return graph.compile()
 
-    def run(self, query: str):
+    def run(self, query: str,filename: str = None):
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running SupervisorAgent...")
         result = None
+
+        state: GraphState = { 
+            "query": query,
+            "agent_route": None,
+            "agent_routes": None,
+            "agent_confidence": None,
+            "subagent_results": {},
+            "filename": filename
+        }
+
         try:
             executor = self.initialize_agent()
-            result = executor.invoke({"query": query})
+            result = executor.invoke(state)
             self.logger.logger.info(f"SupervisorAgent finished running...")
         except Exception as e:
             self.logger.log_error("agent_run", e)

@@ -31,6 +31,7 @@ class CodeAgent(BaseModel):
     logger: Optional[Any] = Field(default=None, exclude=True)
     memory:Optional[Any] = Field(default=None,exclude=True)
     end_agent:bool = Field(default=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -40,12 +41,13 @@ class CodeAgent(BaseModel):
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
         pretty_print: bool = True,
-        end_agent:bool = True
+        end_agent:bool = True,
+        record: bool = False
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Code Agent")
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Code Agent",record=record)
         self.logger.logger.info(f"Initializing CodeAgent with model: {model_name}")
         self.end_agent = end_agent
 
@@ -82,6 +84,41 @@ class CodeAgent(BaseModel):
         except Exception as e:
             self.logger.log_error(f"_create_template({template_name})", e)
             raise ValueError(f"Failed to initialize template: {template_name}")
+    
+    def format_answer(self,state):
+        summarize_template = """
+            You are an expert at summarizing generated code and diagrams.
+            **Inputs**:
+
+            Generated code: {generated_code}
+            Generated diagram: {diagram}
+            User query: {query}
+            Implementation steps: {steps}
+
+            **Instructions**:
+            Analyze the generated output and provide a structured summary following this format:
+            
+                **Implementation Overview**: [Brief description of what was built/created]
+                **Key Components**: [List main functions, classes, or diagram elements - 2-3 bullet points max]
+                **Functionality**: [Describe primary capabilities and workflow]
+                **Query Alignment**: [How well the output addresses the user's original request]
+
+            **Guidelines**:
+                - Keep each section to 1-3 sentences maximum
+                - Focus on technical accuracy and clarity
+                - Avoid redundancy between sections
+                - Do not include code snippets or diagram syntax in the summary
+                - Use active voice and present tense
+                - Be specific about technologies, patterns, or methodologies used
+                - Mention any notable limitations or assumptions if relevant
+        """
+        summary_prompt = PromptTemplate(
+            input_variables=["generated_code", "query","diagram_image","core_steps"],
+            template=summarize_template
+        )
+
+        result = self.llm.invoke(summary_prompt.format(generated_code = state.get("generated_code", ""), query=state["query"],diagram = state.get("diagram_image",""),steps = state.get("core_steps",""))).content
+        return result 
     
     def initialize_tools(self):
         self.logger.logger.debug("Initializing Code Agent tools")
@@ -183,21 +220,24 @@ class CodeAgent(BaseModel):
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
         
-        def create_diagram(state:GraphState) -> GraphState:
+        def create_diagram(state: GraphState) -> GraphState:
             node_name = "create_diagram"
             node_start_time = self.logger.log_node_entry(node_name, state)
 
-            if not state.get("generated_code"):
-                self.logger.logger.warning("No generated code to create a diagram.")
-                return state  # Skip if no code
+            # Prefer generated_code, fallback to query
+            code_for_diagram = state.get("generated_code") or state.get("query")
 
-            # Call the diagram creation tool (runs diagram generation)
-            diagram_result = self.tools["diagram_creator"]._run(state["query"])
-            updated_state = {**state, "diagram_image": diagram_result["mermaid"]}
+            if not code_for_diagram:
+                self.logger.logger.warning("No code or query available to create a diagram.")
+                return state
+
+            # Call the diagram creation tool
+            diagram_result = self.tools["diagram_creator"]._run(code_for_diagram)
+            updated_state = {**state, "diagram_image": diagram_result["graphviz"]}
 
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
-        
+
         def prepare_code_for_critique(state: GraphState) -> GraphState:
             """Updates the state to move the provided code (query) into generated_code."""
             node_name = "prepare_code_for_critique"
@@ -212,7 +252,9 @@ class CodeAgent(BaseModel):
             node_name = "code_done"
             node_start_time = self.logger.log_node_entry(node_name, state)
 
-            updated_state = {**state, "final_answer":state["generated_code"]}
+            final_answer = self.format_answer(state)
+
+            updated_state = {**state, "final_answer":final_answer}
             self.logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
             
@@ -294,8 +336,8 @@ class CodeAgent(BaseModel):
             if self.end_agent:
                 self.logger.end_agent_run(result)
             return {
-                "generated_code": result.get("generated_code"),
-                "core_steps": result.get("core_steps",""),
-                "critique_feedback": result.get("critique_feedback"),
-                "diagram_image": result.get("diagram_image","")
+                "final_answer": result.get("final_answer"),
+                "generated_code": result.get("generated_code",""),
+                "diagram_image": result.get("diagram_image",""),
+                "agent": "code_agent"
             }

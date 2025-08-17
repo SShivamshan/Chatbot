@@ -45,6 +45,7 @@ class PDFAgent(BaseModel):
     temp_dir: Optional[Any] = Field(default=None, exclude=True)
     graph_state: Optional[Any] = Field(default=None, exclude=True)
     end_agent:bool = Field(default=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -54,12 +55,13 @@ class PDFAgent(BaseModel):
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
         pretty_print: bool = True,
-        end_agent : bool = True             # This is helpful if we wanted to use the agent as its or with another and will not print out the end statistic of the agent. 
+        end_agent : bool = True,           # This is helpful if we wanted to use the agent as its or with another and will not print out the end statistic of the agent. 
+        record:bool = False
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="PDF Agent")
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="PDF Agent",record=record)
         self.logger.logger.info(f"Initializing PDFAgent with model: {model_name}")
         self.end_agent = end_agent
 
@@ -431,7 +433,10 @@ class PDFAgent(BaseModel):
             executor = self.initialize_agent()
             
             uploaded = True if filename is None else False
-            self.uploaded_filename = filename
+            if filename is None:
+                self.uploaded_filename = None
+            elif hasattr(filename, "name"):
+                self.uploaded_filename = filename.name
 
             # Step 1: Initialize state if not already done
             if not self.graph_state:
@@ -462,7 +467,8 @@ class PDFAgent(BaseModel):
             # Step 5: Return final answer
             trimmed_result = {
                 "final_answer": result.get("final_answer"),
-                "sources": result.get("sources")
+                "sources": result.get("sources"),
+                "agent": "pdf_agent"
             }
         except Exception as e:
             self.logger.log_error("agent_run", e)

@@ -443,5 +443,6 @@ class WebAgent(BaseModel):
         
         return { 
             "final_answer": result.get("final_answer", "No answer generated.").content if isinstance(result.get("final_answer", "No answer generated."), AIMessage) else result.get("final_answer", "No answer generated."),
-            "sources": result.get("sources", None)
+            "sources": result.get("sources", None),
+            "agent": "web_agent"
         }

@@ -194,7 +194,7 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are the Supervisor Agent. Your task is to analyze the user query and route it to the most appropriate sub-agent.
+        You are the Supervisor Agent. Your task is to analyze the user query and route it to the most appropriate sub-agent among these: AgenticRAG, KBAgent, CodeAgent
 
         Responsibilities:
         1. Read and understand the user's query.
@@ -219,10 +219,11 @@ Agent_templates:
                 - “Explain how photosynthesis works.”  
 
         - **CodeAgent**:  
-            - For writing, analyzing, or executing programming-related content.  
+            - For writing, analyzing, or executing programming-related content, creating code diagrams in Graphviz. 
             - Examples:  
                 - “Write a Python script to sort a list.”  
                 - “Explain what this JavaScript function does.”
+                - “Create a diagram for this function.”
 
         <|start_header_id|>user<|end_header_id|>
         **Query to analyze:** {query}
@@ -524,7 +525,7 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        Classify the following query. Respond ONLY with JSON.
+        Classify the following query and classify them among these types: "generate", "correct", "diagram", "critique" . Respond ONLY with JSON.
   
         Examples:
         Query: "Write a Python function to sort a list"
@@ -718,6 +719,7 @@ Agent_templates:
         - Standards: [PEP8 for Python, Modern C++ guidelines, etc.]
         - Maximum code quality and readability are required
         - Use appropriate coding styles and conventions (e.g., snake_case for variable names, meaningful function/class names)
+        - DO NOT ADD ANY OTHER TEXTS OR ELEMENTS OTHER THAN THE CODE ITSELF
 
         ## IMPLEMENTATION REQUIREMENTS
         Follow these requirements meticulously:
@@ -1030,30 +1032,42 @@ Agent_templates:
 
         <|start_header_id|>system<|end_header_id|>
 
-        You are an expert software developer. Your task is to create a diagram or flowchart to visualize the given code structure. The diagram should show the relationships between different components, functions, and classes, as
-        well as any potential dependencies or interactions. If the user asks for a specific diagram such as class diagram, flowchart, **ONLY** create the asked diagram. The diagram should be written in the Mermaid format.
+        You are an expert software developer. Your task is to create a diagram or flowchart to visualize the given code structure.  
+        The diagram should show the relationships between different components, functions, and classes, as well as any potential dependencies or interactions.  
+        If the user asks for a specific diagram (e.g., class diagram, flowchart), **ONLY** create the requested diagram.  
+        The diagram should be written in **Graphviz DOT format**.
 
-        You must output valid JSON with a single 'mermaid' field containing the diagram.
+        Core Requirements:
+        1. Analyze the code thoroughly before creating any diagram.  
+        2. Identify the most appropriate diagram type based on the code structure.  
+        3. Create accurate representations of relationships and dependencies.  
+        4. Use proper Graphviz DOT syntax with error checking.  
+        5. Output valid JSON with proper escaping, with a single `"graphviz"` field containing the diagram.
 
         **Example Output:**
-        **Example 1 :**
+        **Example 1 (Flowchart):**
         ```json
         {{
-          "mermaid": "graph LR\n A[Component A] --> B[Component B]\n B --> C[Component C]\n C --> D[Component D]"
+          "graphviz": "digraph G {{\\n  Start [shape=circle,label=\\"Start\\"];\\n  Decision [shape=diamond,label=\\"Decision?\\"];\\n  ProcessA [shape=box,label=\\"Process A\\"];\\n  ProcessB [shape=box,label=\\"Process B\\"];\\n  End [shape=doublecircle,label=\\"End\\"];\\n  Start -> Decision;\\n  Decision -> ProcessA [label=\\"Yes\\"];\\n  Decision -> ProcessB [label=\\"No\\"];\\n  ProcessA -> End;\\n  ProcessB -> End;\\n}}"
         }}
         ``` 
-
         **Example 2 :**
         ```json
         {{
-          "mermaid": "classDiagram\n Animal <|-- Duck\n Animal <|-- Fish\n Animal <|-- Zebra\n Animal : +int age\n class Duck{{\n +String beakColor\n +swim()\n +quack()\n }}\n class Fish{{\n -int sizeInFeet\n -canEat()\n }}\n class Zebra{{\n +bool is_wild\n +run()\n }}"
+          "graphviz": "digraph Classes {{\\n  node [shape=record];\\n  ClassName [label=\\"{{ClassName|+public_method()|-private_method()|#protected_method()|+field_name: Type}}\\"];\\n  Parent -> Child [arrowhead=empty,label=\\"inheritance\\"];\\n  ClassA -> ClassB [label=\\"dependency\\"];\\n  ClassA -> ClassB [arrowhead=diamond,label=\\"composition\\"];\\n  ClassA -> ClassB [arrowhead=odiamond,label=\\"aggregation\\"];\\n}}"
         }}
         ```
+        Error Prevention:
+        1. Escape special characters in JSON strings (\n, ", \).
+        2. Validate node names (use alphanumeric + underscores).
+        3. Check arrow syntax (->, arrowhead types like empty, diamond).
+        4. Ensure relationships match actual code structure.
+        5. Test DOT syntax validity before output.
 
         **Instructions:**
-        - Your diagram should be based on the given code structure.
-        - Use the provided template examples to create the diagram.
-        - Ensure proper JSON formatting. Do not include Markdown or code block syntax. 
+        - Your diagram must be based on the given code structure.
+        - Use Graphviz DOT syntax, properly escaped for JSON.
+        - Do not include Markdown or code block syntax in the final output.
 
         <|start_header_id|>user<|end_header_id|>
         {query}
@@ -1061,7 +1075,7 @@ Agent_templates:
         <|start_header_id|>assistant<|end_header_id|>
         ```json
         {{
-        "mermaid": "{{formatted_diagram}}"
+        "graphviz": "{{formatted_diagram}}"
         }}
         ```
         <|eot_id|>
@@ -1077,11 +1091,11 @@ Agent_templates:
         schema: {
           "type": "object",
           "properties": {
-            "mermaid": {
+            "graphviz": {
               "type": "string"
             }
           },
-          "required": ["mermaid"]
+          "required": ["graphviz"]
         }
 
 # ==================================================================================== Knowledge base Agent template ==================================================================================== #  
@@ -1317,7 +1331,7 @@ Agent_templates:
 
         You are an expert system designed to classify and split user queries based on their retrieval needs. Your task is to analyze each query and determine whether it pertains to:
 
-        - **pdf**: If the query is asking about information from a local or online PDF document.
+        - **pdf**: If the query is asking about information from a uploaded(local) or online PDF document.
         - **web**: If the query is asking for up-to-date or external information that needs to be retrieved from the internet.
         - **[pdf,web]**: If the query requires information from both a PDF and the web.
 

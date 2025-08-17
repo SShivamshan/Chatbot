@@ -15,14 +15,15 @@ from langchain_chroma import Chroma
 # Here we don't maintain memory since the own agent takes care of that. 
 
 class GraphState(TypedDict):
-    query: str
+    query: Optional[str]
     final_answer: Optional[str]
     pdf_query: Optional[str]
     web_query: Optional[str]
     query_type: Optional[str]
-    answer_dict: Dict
-    filename: str 
+    answer_dict: Optional[Dict]
+    filename: Optional[str] 
     sources: Optional[List]
+    agent_type: Optional[str] 
 
 class AgenticRAG(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
@@ -33,6 +34,7 @@ class AgenticRAG(BaseModel):
     question_routing: Optional[Any] = Field(default=None, exclude=True)
     logger: Optional[Any] = Field(default=None, exclude=True)
     end_agent:bool = Field(default=True)
+    record:bool = Field(default=False)
 
     def __init__(
         self,
@@ -42,13 +44,15 @@ class AgenticRAG(BaseModel):
         chatbot: Optional[Any] = None,
         log_level: int = logging.INFO,
         pretty_print: bool = True,
-        end_agent : bool = True   
+        end_agent : bool = True,
+        record: bool = False 
     ):
         super().__init__()
         # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="AgenticRAG")
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="AgenticRAG",record=record)
         self.logger.logger.info(f"Initializing AgenticRAG with model: {model_name}")
         self.end_agent = end_agent
+        self.record = record
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
@@ -80,8 +84,8 @@ class AgenticRAG(BaseModel):
     def initialize_tools(self):
         self.logger.logger.debug("Initializing AgentRAG tools")
 
-        web_agent = WebAgent(base_url=None,model_name=None,chatbot=self.llm,end_agent=False)
-        pdf_agent = PDFAgent(base_url=None,model_name=None,chatbot=self.llm,end_agent=False)
+        web_agent = WebAgent(base_url=None,model_name=None,chatbot=self.llm,end_agent=False,record=self.record)
+        pdf_agent = PDFAgent(base_url=None,model_name=None,chatbot=self.llm,end_agent=False,record=self.record)
 
         return {"pdf_agent":pdf_agent,"web_agent":web_agent}
     
@@ -117,7 +121,11 @@ class AgenticRAG(BaseModel):
 
             response = self.tools["web_agent"].run(state["query"]) # Contains a dict with keys as final_answer and sourcs(list of dict)
 
-            updated_state = {**state,"answer_dict":response}
+            updated_state = {
+                **state,
+                "answer_dict": response,
+                "agent_type": "web_agent"
+            }
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -128,9 +136,9 @@ class AgenticRAG(BaseModel):
             node_name = "run_pdf_agent"
             node_start_time = logger.log_node_entry(node_name, state)
 
-            response = self.tools["pdf_agent"].run(state["query"]) # Contains a dict with keys as final_answer and answer_dcit 
+            response = self.tools["pdf_agent"].run(state["query"],filename=state["filename"]) # Contains a dict with keys as final_answer and answer_dcit 
 
-            updated_state = {**state,"answer_dict":response}
+            updated_state = {**state,"answer_dict":response,"agent_type":"pdf_agent"}
             logger.log_node_exit(node_name, updated_state, node_start_time)
             return updated_state
 
@@ -184,7 +192,8 @@ class AgenticRAG(BaseModel):
                 "answer_dict": {
                     "final_answer": final_answer,
                     "sources": combined_sources
-                }
+                },
+                "agent_type": "both_agents"
             }
             unload_model(logger=self.logger.logger, model_name="nomic-embed-text:latest")
 
@@ -198,7 +207,7 @@ class AgenticRAG(BaseModel):
             # We now retrieve the values from the state
             response = state["answer_dict"]
             
-            updated_state = {**state,"final_answer":response["final_answer"],"sources":response["sources"]}
+            updated_state = {**state,"final_answer":response["final_answer"],"sources":response["sources"],"agent_type": state.get("agent_type")}
             logger.log_node_exit(node_name, updated_state, node_start_time)
 
             return updated_state
@@ -277,5 +286,6 @@ class AgenticRAG(BaseModel):
 
         return {
                 "final_answer": result.get("final_answer",None),
-                "sources": result.get("sources",None)
+                "sources": result.get("sources",None),
+                "agent": result.get("agent_type", None)
             }
