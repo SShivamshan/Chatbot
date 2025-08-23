@@ -41,15 +41,17 @@ class KBAgent(BaseModel):
         record: bool = False
     ):
         super().__init__()
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Knowledge Base Agent",record=record)
-        self.logger.logger.info(f"Initializing Knowledge Base agent with model: {model_name}")
-        self.end_agent = end_agent
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
             model=model_name,
             context_length=context_length
         )
+
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Knowledge Base Agent",record=record)
+        self.logger.logger.info(f"Initializing Knowledge Base agent with model: {self.llm.model}")
+        self.end_agent = end_agent
+        
         self.logger.logger.info("Knowledge Agent LLM initialized")
         
         DOMAIN_CONTEXT_PROMPT = self._create_template(template_name="Domain_context_template")
@@ -73,16 +75,32 @@ class KBAgent(BaseModel):
             self.logger.log_error(f"_create_template({template_name})", e)
             raise ValueError(f"Failed to initialize template: {template_name}")
     
-    def format_knowledge(self,content):
+    
+    def format_knowledge(self, content):
         self.logger.logger.debug("Formatting knowledge content")
+        
+        # Get the lists
+        answers = content.get("answer", [])
+        titles = content.get("title", [])
+        urls = content.get("url", [])
 
-        formatted_text = "\n\n".join(
-            [
-                f"{title}\n {contents}"
-                for title,contents in zip(content["title"],content["answer"])
-            ]
-        )
+        answer = None
+        if isinstance(answers,list):
+            answer = "\n".join(answer in answers)
+        elif isinstance(answers,str):
+            answer = answers
 
+        formatted_text = answer
+
+        if titles and urls:
+            formatted_text += "\n\n**Sources:**"
+
+            for title, url in zip(titles, urls):
+                if title and url:  # Only add if both title and url exist
+                    formatted_text += f"\n{title}: {url}"
+                elif title: 
+                    formatted_text += f"\n{title}"
+        
         return formatted_text.strip()
 
     def create_graph(self):
@@ -118,7 +136,7 @@ class KBAgent(BaseModel):
                     history_text += f"\nAI: {msg.content}"
 
             result = self.knowledge_result.invoke({"query": state["query"],"domain":state["domain"],"subdomain":state["subdomain"], "chat_history":history_text})
-            
+            print(result)
             formatted_response = self.format_knowledge(result)
             sources = [
                 {"title": title, "url": url}

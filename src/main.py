@@ -2,7 +2,7 @@ import sys
 sys.path.append(".")
 from app import ChatbotApp
 # TODO: 
-# Add The llm handler to the app and test 
+# Test out the fact that we pull from ollama from the app, Only need to finish the account management, deleting and admin process. 
 # Add the method to use properly the agent through cmd using run_agent.py 
 
 #       The torch cuda is not working find a solution for that and find a way to see it the model is already in the GPU for when we read the pdf since it' uses the yolo models 

@@ -1,7 +1,6 @@
 import sys
 sys.path.append(".")
 import streamlit as st
-from datetime import datetime
 
 """
 Goes to the history page containing old chats to be removed or to view it's contents.

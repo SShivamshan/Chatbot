@@ -164,7 +164,7 @@ class HomePage:
         history_expander = st.expander("Recent history", expanded=True)
 
         with history_expander:
-            # Display chat history (example: retrieve from `st.session_state` or fetch from database)
+            # Display chat history
             if "sessions" in st.session_state:
                 # Iterate through each session and create a "card" for each session
                 for idx, session in enumerate(st.session_state.sessions):

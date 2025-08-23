@@ -4,6 +4,7 @@ import uuid
 import time
 import base64
 import logging
+import subprocess
 from datetime import datetime, timedelta
 from collections import deque
 from threading import Thread
@@ -23,20 +24,16 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.chains.conversation.memory import ConversationBufferMemory
 
 sys.path.append(".")
-from models.Model import Chatbot
+from models.Model import Chatbot,CHATOpenAI
 from models.RAG import RAG
 # Agents
-from models.WebAgent import WebAgent
-from models.AgenticRAG import AgenticRAG
-from models.CodeAgent import CodeAgent
-from models.KBAgent import KBAgent
 from models.SupervisorAgent import SupervisorAgent
 
 from pages.home import HomePage
 from pages.chat import ChatPage
 from pages.history import HistoryPage
 from pages.account import AccountManager
-from pages.data_db import ImageManager,TableManager
+from pages.data_db import ImageManager,TableManager,ChatDataManager
 from src.utils import *
 
 
@@ -67,6 +64,10 @@ class ChatbotApp:
             st.session_state.parent_directory = "images/img_output"
         if "agent_running" not in st.session_state:
             st.session_state.agent_running = False
+        if "openai_api_key" not in st.session_state:
+            st.session_state.openai_api_key = None
+        if "ollama_model" not in st.session_state:
+            st.session_state.ollama_model = None
 
         self.messages_loaded = False
         self.current_page = "account"
@@ -78,7 +79,7 @@ class ChatbotApp:
         self._context_length = context_length
     
         st.set_page_config(page_title="H1", initial_sidebar_state="collapsed",layout=st.session_state.layout)
-        self.__vectorstore = Vectordb()
+        self.__vectorstore = Vectordb(NAME="RAG")
         self.pdf_reader = PDF_Reader()
         self.account_page = AccountManager()
         self.img_datadb = ImageManager(engine=self.account_page.engine)
@@ -132,12 +133,12 @@ class ChatbotApp:
                             "filename" : pdf_filename if chat_type == 2 else None,
                             "last_saved_index": len(message_deque) - 1,  # Mark all loaded messages as saved
                             "from_history": set(range(len(message_deque))),  # Mark all message indices as from history
-                            "sources": None # These will be the sources if agent gives out. 
+                            "sources": None, # These will be the sources if agent gives out.
+                            "chat_settings": {}
                         }
                     if pdf_ref:
                         st.session_state.sessions[chat]["saved"] = True
                     
-               
             self.messages_loaded = True
         except Exception as e:
             st.error(f"Error retrieving user chats: {str(e)}")
@@ -158,7 +159,8 @@ class ChatbotApp:
                 "last_saved_index": -1,
                 "chat_type": chat_type,
                 "file_hash" : None, # This will keep the file
-                "sources": None # These will be the sources if agent gives out.  
+                "sources": None, # These will be the sources if agent gives out.
+                "chat_settings": {} 
             }
             st.session_state.current_session_id = new_session_id
             st.session_state.active_page = "chat"  # Set active page to "chat"
@@ -178,11 +180,16 @@ class ChatbotApp:
             if st.session_state.current_session_id:
                 # Offload the model from the current chat type when switching to sessions with different chat types
                 chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
+
                 if chat_type == 2 and st.session_state.llm_instances.get("chat_type", None):
-                    if len(st.session_state.llm_instances[chat_type]) > 0:
+                    llm = st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm
+                    if len(st.session_state.llm_instances[chat_type]) > 0 and hasattr(llm, "unload_model") and callable(getattr(llm, "unload_model")):
                         st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
+
                 elif chat_type in [0,1] and len(st.session_state.llm_instances) != 0:
-                    st.session_state.llm_instances[chat_type].llm.unload_model()
+                    if hasattr(st.session_state.llm_instances[chat_type].llm, "unload_model") and callable(getattr(st.session_state.llm_instances[chat_type].llm, "unload_model")):
+                        st.session_state.llm_instances[chat_type].llm.unload_model()
+
                 self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force=True)
                 
             # Switch to the new session
@@ -190,7 +197,7 @@ class ChatbotApp:
             # Ensure the new session has a properly initialized last_saved_index
             if "last_saved_index" not in st.session_state.sessions[session_id]:
                 st.session_state.sessions[session_id]["last_saved_index"] = -1  
-            
+
             # Update active page and notify user
             st.session_state.active_page = "chat"
             st.session_state.layout = "wide" if st.session_state.sessions[st.session_state.current_session_id]["chat_type"] in [1,2] else "centered"
@@ -308,75 +315,171 @@ class ChatbotApp:
             delete_tab, logout, change = st.columns(3)
             # Deleting chat history for this account
             if delete_tab.button("Delete Chat", key="delete_button", help="Permanently remove all chat history for this account"):
-                pass
-            
+                user_chats =  self.account_page.chats.get_user_chats(st.session_state.user_id)
+
+                if not user_chats:
+                    st.info("No chats found for this account.")
+                else:
+                    success_count = 0
+                    for chat in user_chats:
+                        chat_id = chat[0]  # chat_id is the first element in the tuple
+                        if self.account_page.chats.delete_chat(chat_id):
+                            success_count += 1
+                    
+                    st.success(f"Deleted {success_count} chat(s) for this account.")
+                    if "sessions" in st.session_state:
+                        st.session_state.sessions.clear()
+                        st.session_state.chat_counter = 0 
+
+                    if not st.session_state.sessions:
+                        st.session_state.active_page = "home"
+                        st.session_state.current_session_id = None
+                        st.rerun()
+                
             st.divider()  
             if logout:
                 col1, col2 = st.columns(2)
 
-                col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account")
+                if col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account"):
+                    st.session_state.layout = "centered"
+                    if st.session_state.get("current_session_id"):
+                        self.unload_all_models()
+                    self.account_page.logout_db()
+
                 col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data")
             
             st.divider() 
-            # Change the localhost if there's a need to change 
-            local_host = st.text_input("Localhost",value="8501",key="localhost")
-            if st.button("Submit",key="submit_settings_popover"):
-                st.session_state.local_host = local_host
-                
+            
         if st.session_state.active_page == "chat":
             with session_tab:
                 st.markdown("<h2>Session settings</h2>", unsafe_allow_html=True)
-                st.write("Here you can configure the chatbot settings.")
-                params = {}
-                model_name = None
-                # Placeholder settings options
-                chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
-                model_choice = st.session_state.llm_instances.get(chat_type, None)
-                if model_choice is None:
-                    st.warning("Choose a model before setting it's parameters.")
-                else:
-                    if isinstance(model_choice, dict):
-                        model_name = model_choice[st.session_state.current_session_id].llm.model
+                st.write("Here you can configure the current session LLM settings.")
+
+                # Choose provider
+                provider = st.radio("Select provider:", ["OpenAI", "Ollama"], key="chat_provider")
+
+                # Shared parameters
+                context_length = st.number_input("Context length:", min_value=256, max_value=32768, value=2048)
+                temperature = st.slider("Temperature:", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+
+                if provider == "OpenAI":
+                    if st.session_state["openai_api_key"] is None:
+                        st.error("⚠️ Please add your OpenAI API key first in the 'Other / ADD' tab.")
                     else:
-                        model_name = model_choice.llm.model
-                        
-                    st.write(f"### Current Model Chosen: `{model_name}`")
+                        # let user select OpenAI model
+                        model_name = st.selectbox(
+                            "Choose OpenAI model:",
+                            ["gpt-4o-mini", "gpt-4.1", "gpt-4-turbo", "gpt-3.5-turbo"],
+                        )
+                
+                elif provider == "Ollama":
+                    try:
+                        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, check=True)
+                        models = [line.split()[0] for line in result.stdout.strip().split("\n")[1:]]
+                    except Exception:
+                        models = []
+                        st.error("⚠️ Could not fetch Ollama models. Make sure Ollama is installed and running.")
+                    if models:
+                        model_name = st.selectbox(
+                            "Select an installed Ollama model:",
+                            models,
+                            index=0 if st.session_state.get("ollama_model") not in models else models.index(st.session_state["ollama_model"])
+                        )
+                    else:
+                        st.warning("No Ollama models found. Please pull one in the 'Other / ADD' tab first.")
+                        model_name = None
+                
+                if "chat_type" in st.session_state:
+                    if st.session_state.chat_type in [1, 2]:
+                        st.warning("⚠️ For Chat type 2 (RAG) or 1 (AI Agent), please select a multimodal-capable model.")
+                    elif st.session_state.chat_type == 0:
+                        st.info("ℹ️ For Chat type 0, which is a chatbot any model will work.")
 
-                params = get_ollama_model_details(model_name=model_name) 
-                if params:
-                    # Read-only model parameters
-                    st.markdown("### Model Details (Read-Only)")
-                    col1, col2 = st.columns(2)  
-                    with col1:
-                        st.text_input("Architecture", params["architecture"], disabled=True)
-                        st.text_input("Parameters", params["parameters"], disabled=True)
-                    with col2:
-                        st.text_input("Embedding Length", params["embedding_length"], disabled=True)
-                        st.text_input("Quantization", params["quantization"], disabled=True)
-
-                    # Editable parameter (context length)
-                    st.markdown("### Modify Model Settings")
-                    context_length = st.number_input(
-                        "Context Length", min_value=100, max_value=params["context_length"], value=min(self._context_length, params["context_length"])
-                    )
-
-                temperature = st.slider("Temperature",min_value=0, max_value=10)
-
-                if st.button("Submit",key='Submit'):
-                    st.session_state.chat_settings = {
+                if st.button("Submit", key='Submit'):
+                    st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] = {
+                        "provider": provider,
+                        "model_name": model_name,
                         "context_length": context_length,
                         "temperature": temperature,
-                        "model_name": model_name,
                     }
                     st.success("Settings updated successfully!")
                     st.rerun()
         with other_tab:
-            st.header("Other")
-            # API keys for OPENAI, adding new models
-            
+            st.header("Other / ADD")
+
+            option = st.radio("Choose a model source:", ["OpenAI", "Ollama"])
+
+            if option == "OpenAI":
+                st.subheader("🔑 OpenAI API Key")
+                api_key = st.text_input("Enter your OpenAI API Key:", type="password")
+                if api_key:
+                    st.session_state["openai_api_key"] = api_key
+                    st.success("✅ OpenAI API Key saved! (session only)")
+                    st.rerun()
+
+            elif option == "Ollama":
+                st.subheader("🦙 Ollama Models")
+
+                model_name = st.text_input(
+                    "Enter the name of the Ollama model you want to pull (e.g., llama2, mistral, codellama):"
+                )
+
+                if st.button("Pull Model"):
+                    if model_name.strip():
+                        try:
+                            with st.spinner(f"Pulling model `{model_name}` from Ollama registry..."):
+                                pull_result = subprocess.run(
+                                    ["ollama", "pull", model_name],
+                                    capture_output=True,
+                                    text=True,
+                                    check=True
+                                )
+                            st.session_state["ollama_model"] = model_name
+                            st.success(f"✅ Model `{model_name}` pulled successfully!")
+                            st.rerun()
+                        except subprocess.CalledProcessError as e:
+                            st.error(f"❌ Failed to pull model: {e.stderr}")
+                    else:
+                        st.warning("⚠️ Please enter a model name before pulling.")
+                    
+    def retrieve_model(self):
+        chat_settings = st.session_state.sessions[st.session_state.current_session_id].get("chat_settings", {})
+        handler = None
+        if not chat_settings:
+            st.warning("⚠️ Chat settings not configured yet. Using default values.")
+            chat_settings = {}
+
+        provider = chat_settings.get("provider", "OpenAI")
+        model_name = chat_settings.get("model_name", "gpt-4.1")
+        temperature = chat_settings.get("temperature", 0.0)
+        max_tokens = chat_settings.get("context_length", 8192)
+
+        api_key = None
+        if provider == "OpenAI":
+            api_key = st.session_state.get("openai_api_key")
+
+            handler = CHATOpenAI(
+                api_key=api_key,
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+
+        elif provider == "Ollama":
+
+            handler = Chatbot(
+                base_url=self._base_url,
+                model=model_name,
+                context_length=max_tokens
+            )
+        return handler
+
+
     @st.dialog("Embeddings saving...")
     def render_embeddings_popup(self, file:str, file_hash:str):
         id_key = "doc_id"
+        chatbot_image,chatbot_table = None,None
+
         with st.status(label="Processing the current document...",expanded=True,state="running") as status:
             session = st.session_state.sessions[st.session_state.current_session_id]
             filename = session.get("filename", None)
@@ -403,12 +506,33 @@ class ChatbotApp:
                 if file_paths is None:
                     self.logger.error("File paths were not retrieved from the thread")
                 
-                chatbot_image = Chatbot(model="llava:7b")
-                chatbot_table = Chatbot()
+                if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
+                    chatbot_image = Chatbot(
+                        base_url=self._base_url,
+                        model="llava:7b",
+                        context_length=self._context_length
+                    )
+                else:
+                    chatbot_image = self.retrieve_model() 
+
+                if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
+                    chatbot_table = Chatbot(
+                        base_url=self._base_url,
+                        model="llava:7b",
+                        context_length=self._context_length
+                    )
+                else:
+                    chatbot_table = self.retrieve_model() 
+
                 image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot_image)
                 table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot_table)
-                chatbot_image.unload_model()
-                chatbot_table.unload_model()
+
+                if hasattr(chatbot_image, "unload_model") and callable(getattr(chatbot_image, "unload_model")):
+                    chatbot_image.unload_model()
+
+                if hasattr(chatbot_table, "unload_model") and callable(getattr(chatbot_table, "unload_model")):
+                    chatbot_table.unload_model()
+
                 del chatbot_table
                 del chatbot_image 
 
@@ -789,6 +913,13 @@ class ChatbotApp:
         """Retrieves or creates an LLM instance for the given chat type and session."""
         if chat_type not in st.session_state.llm_instances:
             st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
+        if "last_chat_settings" not in st.session_state:
+            st.session_state.last_chat_settings = {}
+
+        if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] != st.session_state.last_chat_settings.get(chat_type):
+            # Force rebuild
+            st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
+            st.session_state.last_chat_settings[chat_type] = st.session_state.sessions[st.session_state.current_session_id]["chat_settings"].copy()
 
         if chat_type == 2:
             # PDF-specific LLM tied to session_id
@@ -803,7 +934,18 @@ class ChatbotApp:
 
     def create_llm(self, chat_type: int = 0, session_id: str = None):
         """Creates or retrieves the LLM for the specified chat type."""
-        chatbot = Chatbot(base_url=self._base_url, model=self._model, context_length=self._context_length)
+        # chatbot = Chatbot(base_url=self._base_url, model=self._model, context_length=self._context_length)
+        chatbot = None
+        # print(st.session_state.sessions[st.session_state.current_session_id]["chat_settings"])
+        if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
+            chatbot = Chatbot(
+                base_url=self._base_url,
+                model=self._model,
+                context_length=self._context_length
+            )
+        else:
+            chatbot = self.retrieve_model() 
+
         if chat_type == 2:  # Chat with PDF
             # chatbot = Chatbot(model="llama3.2:3b") # Change to llama3.2
             llm = None
@@ -898,6 +1040,9 @@ class ChatbotApp:
                             session["messages"].append({"AI": response["response"]})
                             self.render_multi_modal_response(response=response,container=container)
                             self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id)
+                            # AFTER each response where it retrieves the data from the VectorDB in which it uses the embeddings to retrieve the corresponding the 
+                            # answer after that we can offload the embedding model. 
+                            unload_model(logger=self.logger,model_name="nomic-embed-text:latest",base_url=self._base_url)
                     except Exception as e:
                         self.logger.error("An error occured: {e}")
                         st.error(f"An error occurred: {e}")
@@ -1281,9 +1426,11 @@ class ChatbotApp:
                                     model.llm.unload_model()
                                     unload_model(logger=self.logger, model_name="nomic-embed-text:latest")
                                 else:
-                                    model.llm.unload_model()
+                                    if hasattr(model.llm, "unload_model") and callable(getattr(model.llm, "unload_model")):
+                                        model.llm.unload_model()
                     elif instances:  # Chatbot models (Single instance)
-                        instances.llm.unload_model()
+                        if hasattr(instances, "unload_model") and callable(getattr(instances, "unload_model")):
+                            instances.llm.unload_model()
 
         self.logger.info("All models have been unloaded from memory.")
 

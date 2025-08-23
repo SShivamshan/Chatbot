@@ -48,11 +48,6 @@ class AgenticRAG(BaseModel):
         record: bool = False 
     ):
         super().__init__()
-        # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="AgenticRAG",record=record)
-        self.logger.logger.info(f"Initializing AgenticRAG with model: {model_name}")
-        self.end_agent = end_agent
-        self.record = record
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
@@ -60,6 +55,12 @@ class AgenticRAG(BaseModel):
             context_length=context_length
         )
 
+        # Initialize logger
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="AgenticRAG",record=record)
+        self.logger.logger.info(f"Initializing AgenticRAG with model: {self.llm.model}")
+        self.end_agent = end_agent
+        self.record = record
+        
         self.tools = self.initialize_tools()
 
         QUERY_IDENTIFICATION_PROMPT = self._create_template(template_name="Agentic_RAG_template")

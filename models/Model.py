@@ -1,11 +1,12 @@
 from langchain.llms.base import LLM
 import requests
-from typing import Optional, List
-from pydantic import Field
+from typing import Optional, List, Any
+from pydantic import Field, BaseModel
 import json
 import logging
 import subprocess
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from openai import OpenAI
 
 class Chatbot(ChatOllama):
@@ -155,24 +156,31 @@ class Chatbot(ChatOllama):
         }
 
 
-class LLMHandler:
+class CHATOpenAI(ChatOpenAI):
     """Handles interactions with the LLM for code translation using OpenAI API"""
-    
+    api_key: str = Field(None,alias='api_key')
+    model: str = Field(default="gpt-4.1",alias="model")
+    max_tokens: int = Field(default=8192,alias="max_tokens")
+    temperature: float = Field(default=0.0,alias="temperature")
+    client:Optional[Any] = Field(default=None, exclude=True)
+    logger: Optional[Any] = Field(default=None, exclude=True)
+
     def __init__(self, api_key=None, 
-                 model_name="gpt-4.1", 
+                 model="gpt-4.1", 
                  max_tokens=8192,
                  temperature=0.0):
-        if not api_key:
-            raise ValueError("OpenAI API key must be provided or set as OPENAI_API_KEY environment variable")
-        
-        self.api_key = api_key
-        self.client = OpenAI(api_key=self.api_key)
-        self.model_name = model_name
+        super().__init__(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            openai_api_key=api_key 
+        )
+        self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         
         self.logger = self._setup_logging()
-        self.logger.info(f"LLMHandler initialized with model {self.model_name}")
+        self.logger.info(f"LLMHandler initialized with model {self.model}")
         
     def _setup_logging(self):
         logging.basicConfig(
@@ -196,7 +204,7 @@ class LLMHandler:
             if image is None:
                 self.logger.info("Sending text prompt to OpenAI API.")
                 response = self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=self.temperature,
                     max_tokens=self.max_tokens
@@ -208,7 +216,7 @@ class LLMHandler:
                 self.logger.info("Sending image with prompt to OpenAI API.")
             
                 response = self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=self.model,
                     messages=[
                         {"role": "system", "content": "You are an image understanding assistant."},
                         {"role": "user", "content": prompt, "image_url": image}
@@ -223,5 +231,15 @@ class LLMHandler:
         except Exception as e:
             self.logger.error(f"OpenAI API call failed: {e}", exc_info=True)
             raise
+
+    @property
+    def _llm_type(self) -> str:
+        """
+        Return the type of LLM being used. 
+
+        Returns:
+            str: The LLM type .
+        """
+        return self.model
 
     

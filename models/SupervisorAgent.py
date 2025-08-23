@@ -42,15 +42,15 @@ class SupervisorAgent(BaseModel):
         record: bool = False
     ):
         super().__init__()
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,record=record)
-        self.logger.logger.info(f"Initializing Supervisor Agent with model: {model_name}")
-        self.record = record
-
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
             model=model_name,
             context_length=context_length
         )
+
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,record=record)
+        self.logger.logger.info(f"Initializing Supervisor Agent with model: {self.llm.model}")
+        self.record = record
 
         self.logger.logger.info("Supervisor LLM initialized")
         self.tools = self.initialize_sub_agents()

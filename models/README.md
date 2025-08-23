@@ -10,7 +10,9 @@ This system implements a multi-agent architecture with specialized agents workin
 
 - SupervisorAgent.py - Central orchestrator that coordinates and manages other agents
 - AgenticRAG.py - Advanced Retrieval-Augmented Generation system combining PDF Agent and Web Agent capabilities for intelligent information retrieval from both local documents and online sources
-- Model.py - Core model interface and configuration management for LLM integration used by all agents
+- Model.py – Defines the core model interface and manages configuration for LLM integration across all agents. It includes two main classes:
+    - One subclassing ChatOllama for Ollama-based models.
+    - One subclassing ChatOpenAI for OpenAI API-based models.
 
 ### Specialized Agents
 
@@ -32,4 +34,11 @@ This system implements a multi-agent architecture with specialized agents workin
 - Knowledge Management: Efficient storage and retrieval of information
 - RAG Implementation: Context-aware responses using retrieval-augmented generation
 
+## Running agent on the command line
+
+
 ## Observation 
+
+- A key observation is that the quality of responses from the Agent system using the OpenAI API is significantly better compared to local models.
+- The `nomic-embed-text` embeddings perform reliably with both OpenAI and LLaMA-based models.
+- Local models often struggle with template adherence, producing outputs that do not consistently follow instructions or formatting requirements. In contrast, OpenAI models handle structured outputs and instruction-following much more effectively. 

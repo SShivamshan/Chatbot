@@ -1,4 +1,3 @@
-# Standard library imports
 import os
 import re
 import logging
@@ -16,7 +15,6 @@ import subprocess
 from collections import defaultdict
 from dotenv import load_dotenv
 
-# Third-party library imports
 import yaml
 from PIL import Image
 import chromadb
@@ -27,7 +25,6 @@ from rich.console import Console
 from rich.panel import Panel
 from sklearn.metrics.pairwise import cosine_similarity
 
-# LangChain imports
 from langchain.docstore.document import Document
 from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
@@ -39,21 +36,17 @@ from langchain_chroma import Chroma
 from langchain.schema import BaseRetriever,HumanMessage
 from langchain_tavily import TavilySearch
 
-# Unstructured library imports
 from unstructured.partition.pdf import partition_pdf
 from unstructured.partition.html import partition_html
 from unstructured.documents.elements import CompositeElement,Element
 from unstructured.chunking.title import chunk_by_title
 
-# Local imports
 from models.Model import Chatbot
 
-# Utility imports
 import base64
 
 
 # Solution :https://bennycheung.github.io/ask-a-book-questions-with-langchain-openai 
-
 def split_chuncks(text:List[CompositeElement],filename:str) -> List[Document]: # Solution : https://python.langchain.com/v0.2/docs/tutorials/retrievers/#documents 
     """
     Split the text into chunks and adds metadata to each chunk to link it to the following chunk
@@ -64,7 +57,7 @@ def split_chuncks(text:List[CompositeElement],filename:str) -> List[Document]: #
 
     returns
     -------
-       documents = List[Document]
+    documents = List[Document]
     """
     page_docs = [Document(page_content=page.text) for page in text]
     # Add page numbers as metadata
@@ -107,11 +100,11 @@ def get_pdf_title(pdf_path) -> str:
 
     params
     ------ 
-        - pdf_path (str): Path to the PDF file
+    - pdf_path (str): Path to the PDF file
     
     returns
     -------
-        str: Title of the pdf file if it exists else "No title found"
+    str: Title of the pdf file if it exists else "No title found"
     """
 
     pdf_stream = BytesIO(pdf_path)
@@ -127,9 +120,9 @@ def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434
 
     params
     ------
-        - logger (Logger): Logger object for logging messages
-        - model_name (str): Name of the model to be unloaded
-        - base_url (str): Base URL of the Ollama server (default: "http://localhost:11434")
+    - logger (Logger): Logger object for logging messages
+    - model_name (str): Name of the model to be unloaded
+    - base_url (str): Base URL of the Ollama server (default: "http://localhost:11434")
     """
     curl_command = [
         "curl",
@@ -155,17 +148,16 @@ def load_ai_template(config_path: str) -> Dict:
 
     params
     ------
-        - template_name (str): Name of the template to be loaded
+    - template_name (str): Name of the template to be loaded
 
     returns
     -------
-        Dict: Template configuration loaded from the config.yaml file
+    Dict: Template configuration loaded from the config.yaml file
 
     """
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     return config
-
 
 def get_file_hash(file: Union[str, BytesIO]) -> str:
     """
@@ -178,7 +170,7 @@ def get_file_hash(file: Union[str, BytesIO]) -> str:
 
     returns
     -------
-    - str: MD5 hash of the first 100 bytes of the file
+    str: MD5 hash of the first 100 bytes of the file
     """
     # Get first 100 bytes depending on input type
     if isinstance(file, str):
@@ -248,7 +240,6 @@ class CustomRetriever(BaseRetriever, BaseModel):
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
         return self._get_relevant_documents(query)
 
-
 class TemporaryDB:
     def __init__(self, db_name: str = "default", use_memory: bool = True):
         self.db_name = db_name
@@ -300,7 +291,7 @@ class TemporaryDB:
         except Exception:
             pass
 
-#================================================================ Web srapping/search tools =================================================================# 
+#========================================================================================================= Web srapping/search tools =========================================================================================================# 
 class CustomSearchTool(BaseTool):
     name: str = "web_search"
     description: str = "Useful for answering current or recent questions using Tavily web search."
@@ -657,7 +648,7 @@ class WebscrapperTool(BaseTool):
         raise NotImplementedError("This tool does not support async")
 
 
-#================================================================ Code Tools ================================================================#
+#========================================================================================================= Code Tools =========================================================================================================#
 def format_code(code: str) -> str:
     # return f"```{lang}\n{textwrap.dedent(code)}\n```"
     return f"\n{textwrap.dedent(code)}\n"
@@ -834,10 +825,12 @@ class CodeDiagramCreator(BaseTool):
         """
         Generates a structured prompt for code review.
 
-        Args:
+        params:
+        -------
             code (str): The code snippet to be reviewed.
 
-        Returns:
+        returns:
+        --------
             str: A structured prompt for the LLM.
         """
         try:
@@ -859,36 +852,7 @@ class CodeDiagramCreator(BaseTool):
         """
         raise NotImplementedError("This tool does not support async")
 
-#================================================================ PDF Tools ================================================================#
-
-class PDFTools(BaseTool):
-    name: str = "pdf_tools"
-    description: str = "Performs various operations on PDF files such as reading and retrieving pdf contents."
-    llm: Optional[Chatbot] = Field(default=None, exclude=True)
-    pdf_state:str = Field(default=None,exclude=True)
-    class Config:
-        arbitrary_types_allowed = True
-
-    def __init__(self, llm: Chatbot):
-        super().__init__()
-        self.llm = llm
-        self.pdf_state = "online" # Defines if the pdf is an online file or an uploaded file
-
-    def _run(self, query: str, state:bool):
-        """
-        Analyses the pdf and runs the query on it
-        """
-        if not state:
-            self.pdf_state = "offline"
-
-    def _arun(self, query: str):
-        """
-        This tool does not support asynchronous execution.
-        """
-        raise NotImplementedError("This tool does not support async")
-
-
-#================================================================ Other functions ================================================================#
+#========================================================================================================= Other functions =========================================================================================================#
 
 def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     """
@@ -1124,6 +1088,7 @@ class Vectordb:
             self.logger.error(f"Error searching for context: {e}")
             return None
 
+#========================================================================================================= PDF Tools =========================================================================================================#
 class PDF_Reader:
     _instance = None
     def __new__(cls):

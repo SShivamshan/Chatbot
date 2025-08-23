@@ -30,7 +30,7 @@ class MessageData(Base):
     ai_prompt = Column(Text,nullable=True)
     timestamp = Column(DateTime, default=datetime.now(timezone.utc))
     chat = relationship('ChatData', back_populates='messages')
-    
+        
 class ImageData(Base):
     __tablename__ = 'images'
     id = Column(Integer, primary_key=True)
@@ -368,7 +368,6 @@ class TableManager:
             self.logger.error(f"Failed to get table data: {str(e)}", exc_info=True)
             return None
         
-    
     def delete_table(self):
         """
         Delete all tables from the database.

@@ -1179,7 +1179,7 @@ Agent_templates:
         <|start_header_id|>assistant<|end_header_id|>
         ```json
         {{
-        "answer":string[],
+        "answer":string,
         "title":string[],
         "url": string[]
         }}

@@ -15,43 +15,66 @@
 
 ## Introduction
 
-This project implements a chatbot application using Large Language Models (LLM). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes features for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval. FInally plans are in place to create a Machine learning chat bot type sessions that allows users to interact with their machine learning use cases and understand them better. Currently, there are three forms of application, a simple chat bot, a RAG module and finally an AGENT capable of interacting with PDF and research more relevant information on the web. Currently a Work in Progress especially the Agent part. 
+This project implements a chatbot application using Large Language Models (LLMs). The chatbot is designed to interact with users, process their inputs, and provide relevant responses. It includes capabilities for handling documents, images, and schematics, with integration with ChromaDB for efficient storage and retrieval.
+
+Plans are also in place to develop a machine learning chatbot that allows users to interact with their ML use cases and gain deeper insights. Currently, the project features three application forms:
+
+- Simple Chatbot: Handles basic conversational interactions.
+- RAG (Retrieval-Augmented Generation) Module: Provides enhanced responses by retrieving relevant context from Vector DBs. 
+- Agent: Capable of interacting with PDFs and researching relevant information on the web and various other tasks. Please use the README inside the models folder
+
+All three applications: chatbot, RAG, and agent function properly with offline models as well as API-based models such as OpenAI’s GPT-4.1 and other multi modal models, which currently outperforms the local models.
+
+This project served as a hands-on exploration of LangChain tools and agentic architectures. While the current implementation works well, there is room for improvements in both code quality and user interface[Improvements](#improvements) section. 
 
 ## Project Structure
 The chatbot will start, and you can begin interacting with it through the command line interface.
 ```
 llm/
-├── app.py                  # Main application entry point
-├── config
-│   └── config.yaml         # Template configurations 
-├── database/               # Database related files
-│   ├── app.db
-│   └── chroma.sqlite3
-├── images                  # Project images
-├── LICENSE                 # License file
-├── models                  # Model definitions
-│   ├── AgenticRAG.py
-│   ├── CodeAgent.py
-│   ├── KBAgent.py
-│   ├── Model.py
-│   ├── PDFAgent.py
-│   ├── RAG.py
-│   ├── SupervisorAgent.py
-│   └── WebAgent.py
-├── pages                   # Application pages
-│   ├── account.py          # Account management page
-│   ├── base.py             # Base page template for the app.db 
-│   ├── chat.py             # Chat interface renderer
-│   ├── data_db.py          # Database interface containing the chat session, image and table management
-│   ├── history.py          # Chat history page renderer
-│   ├── home.py             # Home page
-├── src
-│   ├── AgentLogger.py      # Agent Logger using the `rich` module
-│   ├── download_tokens.py  # Allows to download tokens 
-│   ├── main.py             # Main logic file
-│   ├── run_agent.py        # Utility functions
-│   └── utils.py
-└── README.md               # Project documentation
+├── app.py                  # Entry point for running the application
+│
+├── config/
+│   └── config.yaml         # Centralized configuration settings (API keys, model configs, etc.)
+│
+├── database/
+│   ├── app.db              # Application-specific database
+│   └── chroma.sqlite3      # ChromaDB storage for embeddings
+│
+├── images/                 # Visual assets and output images
+│   ├── Agent_structure.png # Diagram showing agent architecture
+│   ├── ai.png              # General AI-related image asset
+│   └── img_output/         # Folder for generated image outputs
+│
+├── LICENSE                 # Project license
+│
+├── models/                 # Core logic for LLM agents and integrations
+│   ├── AgenticRAG.py       # Agent combining RAG with agentic workflows
+│   ├── CodeAgent.py        # Agent specialized in coding tasks
+│   ├── KBAgent.py          # Knowledge base agent for structured queries
+│   ├── Model.py            # Core model interface (ChatOllama, ChatOpenAI)
+│   ├── PDFAgent.py         # Agent for processing PDFs
+│   ├── RAG.py              # Retrieval-Augmented Generation module
+│   ├── README.md           # Documentation for models folder
+│   ├── SupervisorAgent.py  # Agent managing/overseeing other agents
+│   └── WebAgent.py         # Agent capable of web search & retrieval
+│
+├── pages/                  # UI/Frontend pages (likely Streamlit or similar)
+│   ├── account.py          # User account management
+│   ├── base.py             # Base layout/components
+│   ├── chat.py             # Chat interface
+│   ├── data_db.py          # Database interaction page
+│   ├── history.py          # Chat history view
+│   ├── home.py             # Landing page
+│
+├── src/                    # Utility scripts and application logic
+│   ├── AgentLogger.py      # Logging utilities for agent workflows
+│   ├── download_tokens.py  # Script for handling token downloads
+│   ├── main.py             # Main execution script
+│   ├── README.md           # Documentation for src folder
+│   ├── run_agent.py        # CLI entry for running an agent directly
+│   └── utils.py            # Helper functions/utilities
+│
+└── README.md               # Main project documentation
 ```
 
 ## Installation
@@ -76,14 +99,14 @@ conda activate venv
 To run the chatbot application, execute the following command from the project root: ``streamlit run src/main.py``
 ## Features
 
-- Interactive chatbot using LLMs mostly using Ollama (llama3.2 : 3 billion model), llava:7b for images cases. 
-- Document processing and analysis
-- Image and schematic handling
-- Integration with ChromaDB for efficient storage
-- Agents that does the same things as RAG but with the ability to run a search on the web through keywords. 
-- Further addition of machine learning and chat bot mix
-- Offloads the model from the GPU when switching between sessions or logging out. 
-- Possibility of running the agent in the command line by running the run_agent python file. 
+- **Interactive Chatbot with LLMs**: Primarily built using Ollama (LLaMA 3.2 – 3B model) for general conversations, LLaVA-7B for image-related tasks, and the OpenAI API for enhanced performance.
+- **Document Processing & Analysis**: Supports efficient handling and analysis of text-based documents.
+- **Image & Schematic Handling**: Capable of interpreting and interacting with visual data.
+- **ChromaDB Integration**: Provides efficient vector storage and retrieval for contextual responses.
+- **Agent System**: Extends RAG functionality with the ability to perform keyword-based web searches and execute additional automated tasks.
+- **Machine Learning Integration**: Plans to combine chatbot interactions with ML workflows for deeper insights into use cases.
+- **Resource Optimization**: Automatically offloads models from the GPU when switching sessions or logging out.
+- **Flexible Execution**: Agents can also be run directly from the command line via the `run_agent.py` script. 
 
 ## Dependencies
 
@@ -94,6 +117,9 @@ To run the chatbot application, execute the following command from the project r
 - Langgraph             0.3.2
 - Langchain-chroma      0.2.0
 - Langchain-community   0.3.9
+- Langchain-openai      0.3.31
+- Langchain-tavily      0.2.4
+
 
 Since we use ``unstructured`` module directly, it requires the installation of dependencies which are quiet troublesome. 
 Since the application is primarily based on PDF files, we need to install the following dependencies : 
@@ -146,7 +172,7 @@ Solution found : https://github.com/open-webui/open-webui/discussions/6624
 Due to persistent rate limit issues and the unreliability of DuckDuckGo for more robust search requirements, I transitioned to the [Tavily Search API] https://docs.tavily.com/documentation/api-reference/endpoint/search for a more scalable and consistent solution. To integrate Tavily with LangChain, follow this guide: : https://python.langchain.com/docs/integrations/tools/tavily_search/ 
 
 ### NLTK Tokenizers
-The application requires specific NLTK tokenizers for text processing. We've included a function that automatically checks for and installs required tokenizers if they're missing.
+The application requires specific NLTK tokenizers for text processing. I've included a function that automatically checks for and installs required tokenizers if they're missing.
 If you encounter tokenizer-related errors, you can manually install them using:
 
     python -m ntlk.downloader name of the tokenizer or tagger 

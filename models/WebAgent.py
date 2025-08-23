@@ -53,17 +53,17 @@ class WebAgent(BaseModel):
     ):
         """Initialize the agent with modern LangChain patterns."""
         super().__init__()
-        # Initialize logger
-        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent",record=record)
-        self.logger.logger.info(f"Initializing WebAgent with model: {model_name}")
-        self.end_agent = end_agent
-
         # Initialize LLM
         self.llm = chatbot if chatbot else Chatbot(
             base_url=base_url,
             model=model_name,
             context_length=context_length
         )
+        # Initialize logger
+        self.logger = AgentLogger(log_level=log_level, pretty_print=pretty_print,Agent_name="Web Agent",record=record)
+        self.logger.logger.info(f"Initializing WebAgent with model: {self.llm.model}")
+        self.end_agent = end_agent
+
         self.logger.logger.info("Web Agent LLM initialized")
         # Initialize components
         self.tools = self.initialize_tools()
