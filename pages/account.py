@@ -1,9 +1,8 @@
 import sys
-import types
 sys.path.append("..")
 import os
-from sqlalchemy import create_engine, text, Column, String, Integer
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, Column, String, Integer
+from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
 import logging
 from contextlib import contextmanager
@@ -11,11 +10,18 @@ import streamlit as st
 from pages.data_db import ChatDataManager
 from pages.base import Base
 
+# THis explains the concept used for the account page approach: https://www.altexsoft.com/blog/orm-object-relational-mapping/ , https://docs.sqlalchemy.org/en/20/orm/
 class Account(Base):
     __tablename__ = 'accounts'
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
+
+    chats = relationship( # Before we didn't have this,now using the cascade we can automatically delete the chat data/messages associated with the user. 
+        'ChatData',
+        backref='account',
+        cascade='all, delete-orphan'
+    )
 
 class AccountManager:
     _instance = None
@@ -85,7 +91,6 @@ class AccountManager:
             st.warning(f"Username '{account['username']}' is already taken.")
         except Exception as e:
             st.error(f"Error creating account: {e}")
-            # logging.exception("Account creation failed")
             self.logger.exception("Account creation failed")
 
     def render_account_page(self):
@@ -137,8 +142,20 @@ class AccountManager:
         st.cache_data.clear()
         st.rerun()
         
-    def delete_user(self, user_id):
-        pass
+    def delete_user(self, user_id: int) -> None:
+        try:
+            with self.session_scope() as session:
+                user = session.query(Account).filter_by(id=user_id).first()
+                if user:
+                    session.delete(user)
+                    session.commit()
+                    st.success(f"Account '{user.username}' deleted successfully.")
+                    st.cache_data.clear()
+                else:
+                    st.warning(f"No account found with ID {user_id}.")
+        except Exception as e:
+            st.error(f"Error deleting account: {e}")
+            self.logger.exception("Account deletion failed")
 
     def add_chat_id(self,session_id: str, chat_type: int):
         """

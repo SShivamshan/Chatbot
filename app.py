@@ -346,8 +346,13 @@ class ChatbotApp:
                         self.unload_all_models()
                     self.account_page.logout_db()
 
-                col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data")
-            
+                if col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data"):
+                    st.session_state.layout = "centered"
+                    if st.session_state.get("current_session_id"):
+                        self.unload_all_models()
+                    self.account_page.delete_user(st.session_state.user_id)
+                    self.account_page.logout_db()
+
             st.divider() 
             
         if st.session_state.active_page == "chat":
@@ -1118,7 +1123,6 @@ class ChatbotApp:
             st.info(message)
         else:
             st.info(message)
-
 
     def _save_images(self, img:List,filename:str):
         """Saves images from the current document"""

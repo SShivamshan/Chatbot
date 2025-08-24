@@ -34,12 +34,14 @@ class MessageData(Base):
 class ImageData(Base):
     __tablename__ = 'images'
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('accounts.id', ondelete='CASCADE'), nullable=False)
     img_id = Column(String, nullable=False)
     img_url = Column(String, nullable=False)
 
 class TableData(Base):
     __tablename__ = 'tables'
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('accounts.id', ondelete='CASCADE'), nullable=False)
     table_id = Column(String, nullable=False)
     table_html = Column(String, nullable=False)
 
@@ -283,8 +285,7 @@ class ImageManager:
         except Exception as e:
             self.logger.error(f"Failed to get image data: {str(e)}", exc_info=True)
             return None
-        
-
+    
     def delete_image(self):
         """
         Delete all images from the database.
@@ -295,7 +296,6 @@ class ImageManager:
         except Exception as e:
             self.logger.error(f"Failed to delete images: {str(e)}", exc_info=True)
             raise Exception(f"Failed to delete images: {str(e)}")
-        
 
 class TableManager:
     _instance  =  None
