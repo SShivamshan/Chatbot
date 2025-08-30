@@ -14,6 +14,7 @@ from typing import Any
 import subprocess
 from collections import defaultdict
 from dotenv import load_dotenv
+from datetime import datetime
 
 import yaml
 from PIL import Image
@@ -879,7 +880,20 @@ def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     
     return flag_query_dict
 
-def pretty_print_answer(answer):
+def pretty_print_query(query,console:Console):
+    """
+    Prints the user query in a formatted panel.
+    """
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    panel = Panel.fit(
+        query,
+        title=f"🧑 You [{timestamp}]",
+        border_style="bold magenta",
+        padding=(1, 2)
+    )
+    console.print(panel)
+
+def pretty_print_answer(answer,console:Console):
     """
     Prints the given answer in a formatted panel using the 'rich' library.
 
@@ -891,8 +905,13 @@ def pretty_print_answer(answer):
     -------
         None. The function prints the answer in a formatted panel.
     """
-    console = Console()
-    panel = Panel.fit(answer, title="FINAL Answer", border_style="bold cyan")
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    panel = Panel.fit(
+        answer,
+        title=f"🤖 Bot [{timestamp}]",
+        border_style="bold cyan",
+        padding=(1, 2)
+    )
     console.print(panel)
 
 def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Document, str]]:
@@ -1004,7 +1023,7 @@ class Vectordb:
 
         self.client = chromadb.PersistentClient(path=db_path)
 
-        collection_name = "knowledge_base" if NAME is None else NAME
+        collection_name = "knowledge_base" if NAME is None else NAME # This defines the collection default name as knowledge_base 
 
         # Try to get the collection, create only if missing
         try:

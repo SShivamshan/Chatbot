@@ -10,8 +10,6 @@ import streamlit as st
 from datetime import datetime, timezone
 from pages.base import Base
 from collections import deque
-## Solution adapted from: https://ploomber.io/blog/streamlit-postgres/ 
-
 class ChatData(Base):
     __tablename__ = 'chat_data'
     chat_id = Column(String, primary_key=True)
@@ -251,48 +249,47 @@ class ImageManager:
         finally:
             session.close()
 
-    def add_image(self, img_data:dict):
+    def add_image(self, user_id:int, img_data:dict):
         """
         Add a new image reference to the database.
         """
         try:
             with self.session_scope() as session:
                 img_objects = []
-                for img_id,img_url in img_data.items():
+                for img_id, img_url in img_data.items():
                     img_objects.append(
-                        ImageData(img_id = img_id, img_url = img_url)
+                        ImageData(user_id=user_id, img_id=img_id, img_url=img_url)
                     )
-                
                 session.add_all(img_objects)
         except Exception as e:
-            self.logger.error(f"Failed to add messages: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to add image: {str(e)}")
+            self.logger.error(f"Failed to add images: {str(e)}", exc_info=True)
+            raise Exception(f"Failed to add images: {str(e)}")
     
-    def get_chat_image(self, img_ids:List = None) -> List[str]:
+    def get_chat_image(self, user_id:int, img_ids:List = None) -> List[str]:
         """
-        Get all images associated to the img_ids.
+        Get all images associated or the ones asked from the img_ids.
         """
         try:
             with self.session_scope() as session:
-                if img_ids is None:
-                    img_data = session.query(ImageData).all()
-                else:
-                    img_data = session.query(ImageData)\
-                        .filter(ImageData.img_id.in_(img_ids))\
-                        .all()
+                query = session.query(ImageData).filter(ImageData.user_id == user_id)
+                if img_ids is not None:
+                    query = query.filter(ImageData.img_id.in_(img_ids))
                 
+                img_data = query.all()
                 return {img.img_id: img.img_url for img in img_data}
         except Exception as e:
             self.logger.error(f"Failed to get image data: {str(e)}", exc_info=True)
             return None
     
-    def delete_image(self):
+    def delete_image(self,user_id:int):
         """
         Delete all images from the database.
         """
         try:
             with self.session_scope() as session:
-                session.query(ImageData).delete()
+                session.query(ImageData)\
+                    .filter(ImageData.user_id == user_id)\
+                    .delete(synchronize_session=False)
         except Exception as e:
             self.logger.error(f"Failed to delete images: {str(e)}", exc_info=True)
             raise Exception(f"Failed to delete images: {str(e)}")
@@ -333,7 +330,7 @@ class TableManager:
         finally:
             session.close()
             
-    def add_table(self,tables:Dict):
+    def add_table(self,user_id:int, tables:Dict):
         """
         Add a new table reference to the database.
         """
@@ -342,7 +339,7 @@ class TableManager:
                 table_objects = []
                 for table_id,table_html in tables.items():
                     table_objects.append(
-                        TableData(table_id = table_id, table_html = table_html)
+                        TableData(user_id = user_id, table_id = table_id, table_html = table_html)
                     )
                 
                 session.add_all(table_objects)
@@ -350,31 +347,32 @@ class TableManager:
             self.logger.error(f"Failed to add table: {str(e)}", exc_info=True)
             raise Exception(f"Failed to add table: {str(e)}")
 
-    def get_chat_table(self, table_ids:List = None) -> List[str]:
+    def get_chat_table(self,user_id:int, table_ids:List = None) -> List[str]:
         """
-        Get all tables associated to the table_ids.
+        Get all tables associated to the table_ids if given if not retreieve them all.
         """
         try:
             with self.session_scope() as session:
-                if table_ids is None:
-                    table_data = session.query(TableData).all()
-                else:
-                    table_data = session.query(TableData)\
-                        .filter(TableData.table_id.in_(table_ids))\
-                        .all()
+                query = session.query(TableData).filter(TableData.user_id == user_id)
                 
+                if table_ids is not None:
+                    query = query.filter(TableData.table_id.in_(table_ids))
+                
+                table_data = query.all()
                 return {table.table_id: table.table_html for table in table_data}
         except Exception as e:
             self.logger.error(f"Failed to get table data: {str(e)}", exc_info=True)
             return None
         
-    def delete_table(self):
+    def delete_table(self,user_id:int):
         """
         Delete all tables from the database.
         """
         try:
             with self.session_scope() as session:
-                session.query(TableData).delete()
+                session.query(TableData)\
+                    .filter(TableData.user_id == user_id)\
+                    .delete(synchronize_session=False)
         except Exception as e:
             self.logger.error(f"Failed to delete tables: {str(e)}", exc_info=True)
             raise Exception(f"Failed to delete tables: {str(e)}")

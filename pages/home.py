@@ -1,5 +1,7 @@
 import sys
 sys.path.append(".")
+import time
+import subprocess
 import streamlit as st
 from datetime import datetime
 
@@ -85,19 +87,19 @@ class HomePage:
         # Features to display
         features = [
             {
-                "icon": "💡",
-                "title": "General Assistance",
-                "description": "Ask me anything! From simple questions to complex problems."
+                "icon": "💬",
+                "title": "Chat",
+                "description": "Interactive chatbot for conversations, questions, and general assistance."
             },
             {
-                "icon": "📊",
-                "title": "Data Analysis",
-                "description": "Help with analyzing data, creating visualizations, and generating insights."
+                "icon": "📄",
+                "title": "RAG",
+                "description": "Upload and chat with your PDF documents using retrieval-augmented generation."
             },
             {
-                "icon": "✍️",
-                "title": "Writing Assistant",
-                "description": "Help with writing, editing, and improving your content."
+                "icon": "🤖",
+                "title": "Agent",
+                "description": "Advanced agentic capabilities including RAG agents, code agents, and knowledge-based agents."
             }
         ]
 
@@ -130,11 +132,11 @@ class HomePage:
         cols = st.columns(3)
 
         with cols[0]:
-            options=("New Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
+            options=("Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
             option = st.selectbox(label="Chat Option selection", options=options,
                             index=None,placeholder="Choose a chat type",
                             label_visibility="collapsed")
-            if option == "New Chat": # index 0 
+            if option == "Chat": # index 0 
                 self.app.create_session(chat_type=options.index(option))  # Create a new chat session
                 # st.rerun()
             elif option == "Agent": # index 1
@@ -179,32 +181,126 @@ class HomePage:
         """
         Render the settings popover when the settings button is clicked.
         """
-        general_tab, session_tab, other_tab = st.tabs(["Home", "Session", "Other"]) # Here the session tab will allow the user to see the different type of llm already in use(llm_instances)
+        general_tab, other_tab = st.tabs(["Home", "Other"]) # Here the session tab will allow the user to see the different type of llm already in use(llm_instances)
         with general_tab:
             st.header("General Settings")
             # Now we need to add what they do directly on the right 
-            delete_tab, logout, change = st.columns(3)
+            delete_tab, logout, clear_tab = st.columns(3)
             # Deleting chat history for this account
             if delete_tab.button("Delete Chat", key="delete_button", help="Permanently remove all chat history for this account"):
-                pass
-            
+                user_chats =  self.account_page.chats.get_user_chats(st.session_state.user_id)
+
+                if not user_chats:
+                    st.info("No chats found for this account.")
+                else:
+                    success_count = 0
+                    for chat in user_chats:
+                        chat_id = chat[0]  # chat_id is the first element in the tuple
+                        if self.account_page.chats.delete_chat(chat_id):
+                            success_count += 1
+                    
+                    st.success(f"Deleted {success_count} chat(s) for this account.")
+                    if "sessions" in st.session_state:
+                        st.session_state.sessions.clear()
+                        st.session_state.chat_counter = 0 
+
+                    if not st.session_state.sessions:
+                        st.session_state.active_page = "home"
+                        st.session_state.current_session_id = None
+                        st.rerun()
+                
             st.divider()  
             if logout:
                 col1, col2 = st.columns(2)
 
-                col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account")
-                col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data")
-            
-            st.divider() 
-            # Change the localhost if there's a need to change 
-            local_host = st.text_input("Localhost",value="8501",key="localhost")
-            if st.button("Submit",key="submit_settings_popover"):
-                st.session_state.local_host = local_host
+                if col1.button("🔓 Logout", key="logout_settings_popover", help="Logs out this account"):
+                    st.session_state.layout = "centered"
+                    if st.session_state.get("current_session_id"):
+                        self.unload_all_models()
+                    self.account_page.logout_db()
 
-        with session_tab:
-            st.header("Session settings")
-            st.write("Here you can observe the chatbot settings that are already in use since you logged.")
-            params = {}
+                if col2.button("Delete Account", key="delete_account_settings_popover", help="Permanently delete this account and all associated data"):
+                    st.session_state.layout = "centered"
+                    if st.session_state.get("current_session_id"):
+                        self.unload_all_models()
+                    self.account_page.delete_user(st.session_state.user_id)
+                    self.account_page.logout_db()
+
+            st.divider() 
+            if clear_tab.button("Clear All Data", key="clear_button", help="Permanently remove all chats, images, and tables for this account"):
+                user_id = st.session_state.user_id
+                user_chats = self.account_page.chats.get_user_chats(user_id)
+                chat_count = 0
+                if user_chats:
+                    for chat in user_chats:
+                        chat_id = chat[0]
+                        if self.account_page.chats.delete_chat(chat_id):
+                            chat_count += 1
+                try:
+                    self.img_datadb.delete_image(user_id)
+                    img_deleted = True
+                except Exception as e:
+                    img_deleted = False
+                    st.error(f"Failed to delete images: {str(e)}")
+
+                try:
+                    self.table_datadb.delete_table(user_id)
+                    tbl_deleted = True
+                except Exception as e:
+                    tbl_deleted = False
+                    st.error(f"Failed to delete tables: {str(e)}")
+
+                st.success(f"Deleted {chat_count} chat(s), "
+                        f"{'all images' if img_deleted else 'no images'}, "
+                        f"{'all tables' if tbl_deleted else 'no tables'} for this account.")
+                time.sleep(1)
+
+                if "sessions" in st.session_state:
+                    st.session_state.sessions.clear()
+                    st.session_state.chat_counter = 0 
+
+                if not st.session_state.sessions:
+                    st.session_state.active_page = "home"
+                    st.session_state.current_session_id = None
+                    st.rerun()
+
+        with other_tab:
+            st.header("Other / ADD")
+
+            option = st.radio("Choose a model source:", ["OpenAI", "Ollama"])
+
+            if option == "OpenAI":
+                st.subheader("🔑 OpenAI API Key")
+                api_key = st.text_input("Enter your OpenAI API Key:", type="password")
+                if api_key:
+                    st.session_state["openai_api_key"] = api_key
+                    st.success("✅ OpenAI API Key saved! (session only)")
+                    st.rerun()
+
+            elif option == "Ollama":
+                st.subheader("🦙 Ollama Models")
+
+                model_name = st.text_input(
+                    "Enter the name of the Ollama model you want to pull (e.g., llama2, mistral, codellama):"
+                )
+
+                if st.button("Pull Model"):
+                    if model_name.strip():
+                        try:
+                            with st.spinner(f"Pulling model `{model_name}` from Ollama registry..."):
+                                pull_result = subprocess.run(
+                                    ["ollama", "pull", model_name],
+                                    capture_output=True,
+                                    text=True,
+                                    check=True
+                                )
+                            st.session_state["ollama_model"] = model_name
+                            st.success(f"✅ Model `{model_name}` pulled successfully!")
+                            st.rerun()
+                        except subprocess.CalledProcessError as e:
+                            st.error(f"❌ Failed to pull model: {e.stderr}")
+                    else:
+                        st.warning("⚠️ Please enter a model name before pulling.")
 
             
 

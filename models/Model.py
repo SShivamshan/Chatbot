@@ -203,30 +203,22 @@ class CHATOpenAI(ChatOpenAI):
         try:
             if image is None:
                 self.logger.info("Sending text prompt to OpenAI API.")
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens
-                )
-                content = response.choices[0].message.content
+                response = self.invoke([{"role": "user", "content": prompt}])
                 self.logger.info("Received text completion response.")
-                return content
+                return response.content
             else:
                 self.logger.info("Sending image with prompt to OpenAI API.")
             
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "You are an image understanding assistant."},
-                        {"role": "user", "content": prompt, "image_url": image}
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens
-                )
-                content = response.choices[0].message.content
+                messages = [
+                    {"role": "system", "content": "You are an image understanding assistant."},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image}}
+                    ]}
+                ]
+                response = self.invoke(messages)
                 self.logger.info("Received image understanding response.")
-                return content
+                return response.content
             
         except Exception as e:
             self.logger.error(f"OpenAI API call failed: {e}", exc_info=True)

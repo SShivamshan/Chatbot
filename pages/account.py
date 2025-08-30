@@ -22,7 +22,18 @@ class Account(Base):
         backref='account',
         cascade='all, delete-orphan'
     )
-
+    # ImageData and TableData are linked directly to the Account (not to ChatData). They belong to the user independently of any chat session, so they can exist
+    # without being tied to a specific chat. However, when an Account is deleted, their associated images and tables will also be deleted automatically.
+    images = relationship(
+        'ImageData',
+        backref='account',
+        cascade='all, delete-orphan'
+    )
+    tables = relationship(
+        'TableData',
+        backref='account',
+        cascade='all, delete-orphan'
+    )
 class AccountManager:
     _instance = None
 
@@ -34,6 +45,12 @@ class AccountManager:
     def __init__(self):
         if not hasattr(self, 'initialized'):
             self._setup_logging()
+
+            try:
+                db_path = "database/"
+                os.makedirs(db_path, exist_ok=True)
+            except Exception as e:
+                raise 
             self.engine = create_engine('sqlite:///database/app.db')
             self.SessionFactory = sessionmaker(bind=self.engine)
             Base.metadata.create_all(self.engine)

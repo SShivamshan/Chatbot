@@ -250,7 +250,7 @@ class RAG(BaseModel):
             "question": query,
             "chat_history": chat_memory.get("chat_history", []),
         }
-
+        response = None
         try:
             # Generate response
             response = rag_chain.invoke(input_data)

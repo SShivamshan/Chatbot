@@ -16,7 +16,6 @@ import pandas as pd
 from PIL import Image
 import streamlit as st
 from streamlit_javascript import st_javascript
-import streamlit.components.v1 as components
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 from langchain.chains import ConversationChain
 from langchain.storage import InMemoryStore
@@ -39,7 +38,24 @@ from src.utils import *
 
 class ChatbotApp:
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2:3b", context_length: int = 18000):
-        """Initialize the application and its pages."""
+        """
+        Initialize the ChatbotApp with configuration parameters and set up all necessary components. 
+            
+        Initializes:
+            - Logging system
+            - Streamlit session state variables
+            - Page instances (home, chat, history, account)
+            - Database managers (image, table, chat data)
+            - Vector database for RAG functionality
+            - PDF reader for document processing
+            - Agents for Coding, Agentic RAG, and many more
+        
+        params
+        ------
+        - base_url (str): The base URL for the Ollama server. Defaults to "http://localhost:11434".
+        - model (str): The default model name to use. Defaults to "llama3.2:3b".
+        - context_length (int): The maximum context length for the models. Defaults to 18000.
+        """
         
         self._setup_logging() # Logging setup
 
@@ -60,8 +76,6 @@ class ChatbotApp:
             st.session_state.layout = "centered"  # Set the layout to wide mode Solution : https://discuss.streamlit.io/t/how-can-i-set-a-different-layout-per-page/81679 
         if "llm_instances" not in st.session_state: # Ensures that only one instance of each llm model except for the the model for RAG which is created per session. 
             st.session_state.llm_instances = {}
-        if "parent_directory" not in st.session_state:
-            st.session_state.parent_directory = "images/img_output"
         if "agent_running" not in st.session_state:
             st.session_state.agent_running = False
         if "openai_api_key" not in st.session_state:
@@ -84,10 +98,6 @@ class ChatbotApp:
         self.account_page = AccountManager()
         self.img_datadb = ImageManager(engine=self.account_page.engine)
         self.table_datadb = TableManager(engine=self.account_page.engine)
-        if "image_data" not in st.session_state: 
-            st.session_state.image_data = self.img_datadb.get_chat_image()  # Keeps in memory the as key-value pairs the extracted image path save and the image id as it's key
-        if "table_data" not in st.session_state:
-            st.session_state.table_data = self.table_datadb.get_chat_table() # Keep in memory the as key-value pairs the table id as key and the table html as it's value 
         if st.session_state.logged_in and not self.messages_loaded:
             st.session_state.user_id = self.account_page.get_user_id()
             self.on_login(st.session_state.user_id)
@@ -105,7 +115,24 @@ class ChatbotApp:
         self.logger = logging.getLogger(__name__)
 
     def on_login(self, user_id: int):
-        """Handle login and retrieve user-specific chats."""
+        """
+        Handle user login and initialize user-specific data.
+
+        Retrieves and loads:
+            - User's chat history from the database
+            - Associated PDF files and metadata
+            - Image and table data for the user
+            - Sets up directory structure for user files
+            
+        Note:
+            Only executes once per session to avoid reinitializing data.
+            Sets self.messages_loaded to True after successful completion.
+        
+        params
+        ------
+        - user_id (int): The unique identifier for the logged-in user.
+            
+        """
         chat_manager = self.account_page.chats  # Get the ChatDataManager instance
         
         if self.messages_loaded:
@@ -138,13 +165,45 @@ class ChatbotApp:
                         }
                     if pdf_ref:
                         st.session_state.sessions[chat]["saved"] = True
-                    
+                if "image_data" not in st.session_state: 
+                    st.session_state.image_data = self.img_datadb.get_chat_image(user_id=user_id)  # Keeps in memory the as key-value pairs the extracted image path save and the image id as it's key
+                if "table_data" not in st.session_state:
+                    st.session_state.table_data = self.table_datadb.get_chat_table(user_id=user_id) # Keep in memory the as key-value pairs the table id as key and the table html as it's value 
+            
+                if "parent_directory" not in st.session_state:
+                    os.makedirs(f"images/{str(user_id)}/img_output",exist_ok=True)
+                    st.session_state.parent_directory = f"images/{str(user_id)}/img_output"
+            
             self.messages_loaded = True
         except Exception as e:
-            st.error(f"Error retrieving user chats: {str(e)}")
+            self.popover_messages(f"Error retrieving user chats: {str(e)}", "ERROR")
 
     def create_session(self,chat_type:int=0):
-        """Creates a new session with a default name."""
+        """
+        Create a new chat session with the specified type.
+
+        Creates a new session with:
+            - Unique UUID as session ID
+            - Auto-generated name based on chat counter
+            - Empty message deque
+            - Appropriate layout (wide for agents/PDF, centered for regular chat)
+            
+        Side Effects:
+            - Saves current session before creating new one
+            - Updates session state and triggers page rerun
+            - Adds session to user's account in database
+            
+        Raises:
+            Error if user is not logged in.
+        
+        params
+        ------
+        - chat_type (int): The type of chat session to create.
+            - 0 = Regular chatbot
+            - 1 = Agent-based chat
+            - 2 = PDF chat with RAG
+                           
+        """
         if st.session_state.logged_in: # Verify if we are logged in 
             # if not st.session_state.current_session_id:  # Only create if no active session
             current_session_id = st.session_state.current_session_id
@@ -171,17 +230,33 @@ class ChatbotApp:
             st.success(f"New session created: {new_session_name}")
             st.rerun()
         else:
-            st.error("Cannot create a new session while another is active.")
+            self.popover_messages(f"Can't create a session if not logged in", "WARNING")
 
     def switch_session(self, session_id: str):
-        """Switches to an existing session without modifying the session name."""
+        """
+        Switch from the current session to a different existing session.
+        
+        Performs:
+            - Saves current session data before switching
+            - Unloads models from the previous session to free memory
+            - Updates current session ID and active page
+            - Adjusts layout based on the new session's chat type
+            - Triggers UI rerun to reflect changes
+            
+        Raises:
+            Error if the specified session ID doesn't exist.
+
+        params
+        ------
+        - session_id (str): The UUID of the session to switch to.
+            
+        """
         if session_id in st.session_state.sessions:
             # Save the current session before switching to the new session
             if st.session_state.current_session_id:
                 # Offload the model from the current chat type when switching to sessions with different chat types
                 chat_type = st.session_state.sessions[st.session_state.current_session_id]["chat_type"]
-
-                if chat_type == 2 and st.session_state.llm_instances.get("chat_type", None):
+                if chat_type == 2 and len(st.session_state.llm_instances) != 0:
                     llm = st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm
                     if len(st.session_state.llm_instances[chat_type]) > 0 and hasattr(llm, "unload_model") and callable(getattr(llm, "unload_model")):
                         st.session_state.llm_instances[chat_type][st.session_state.current_session_id].llm.unload_model()
@@ -191,7 +266,7 @@ class ChatbotApp:
                         st.session_state.llm_instances[chat_type].llm.unload_model()
 
                 self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force=True)
-                
+            
             # Switch to the new session
             st.session_state.current_session_id = session_id
             # Ensure the new session has a properly initialized last_saved_index
@@ -206,10 +281,27 @@ class ChatbotApp:
             st.success(f"Switched to session: {st.session_state.sessions[session_id]['name']}")
             st.rerun()  # Trigger a rerun to refresh the page
         else:
-            st.error("Session not found!")
+            self.popover_messages(f"Session not found", "ERROR")
 
     def delete_session(self, session_id: str):
-        """Delete a session and update chat naming."""
+        """
+        Delete a chat session and clean up associated data.
+        
+        Performs:
+            - Removes session from database
+            - Deletes session from memory
+            - Recalculates chat numbering for remaining sessions
+            - Redirects to home page if no sessions remain
+            - Updates UI to reflect changes
+            
+        Raises:
+            Error if session deletion from database fails or session ID not found.
+
+        params
+        ------
+        - session_id (str): The UUID of the session to delete.
+            
+        """
         if session_id in st.session_state.sessions:
             # Frist delete the session from the db then remove the session itself
             deleted = self.account_page.chats.delete_chat(session_id)  # Remove the chat from the DB
@@ -238,6 +330,22 @@ class ChatbotApp:
             st.error("Session ID not found!")
 
     def get_image_base64(self,image_path): # Solution: https://discuss.streamlit.io/t/adding-a-link-to-my-image/53669/2
+        """
+        Convert an image file to base64 encoded string.
+
+        Note:
+            Used for embedding images directly in HTML/CSS for Streamlit display.
+            Displays error message to user if image loading fails.
+
+        params
+        ------
+        - image_path (str): Path to the image file to convert.
+            
+        returns
+        -------
+        str: Base64 encoded string of the image, or None if an error occurs.
+            
+        """
         try:
             with open(image_path, "rb") as img_file:
                 return base64.b64encode(img_file.read()).decode()
@@ -246,16 +354,31 @@ class ChatbotApp:
             return None
 
     def customize_sidebar(self):
+        """
+        Create and populate the application sidebar with navigation and controls.
+            - Updates session state when buttons are clicked
+            - Triggers page reruns for navigation
+            - Manages session switching and creation
+        
+        Renders:
+            - Application logo
+            - Chat type selection dropdown (Chat, Agent, PDF chat)
+            - Session creation button
+            - List of recent sessions with switch functionality
+            - Settings button
+            - Logout button
+            
+        """
         st.logo("images/ai.png", size='large')
         st.sidebar.markdown("---")
         
-        options=("New Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
+        options=("Chat", "Agent", "PDF chat") # Solution : https://github.com/streamlit/streamlit/issues/1076 
         option = st.sidebar.selectbox(label="Chat Option selection", options=options,
                         index=None,placeholder="Choose a chat type",
                         label_visibility="visible",
                         key="sidebar_chat_choice")
         if st.sidebar.button("Create Session"):
-            if option == "New Chat": # index 0 
+            if option == "Chat": # index 0 
                 self.create_session(chat_type=options.index(option))  # Create a new chat session
             elif option == "Agent": # index 1
                 self.create_session(chat_type=options.index(option))  # Create a Agent session
@@ -306,13 +429,28 @@ class ChatbotApp:
     @st.dialog("Settings")
     def render_settings_popover(self):
         """
-        Render the settings popover when the settings button is clicked.
+        Render the settings dialog with multiple tabs for configuration options.
+            - Updates session settings when submitted
+            - Modifies global session state for API keys and models
+            - Can trigger account deletion or logout
+        
+        Creates three tabs:
+        1. Home: General settings including delete chat history, logout, delete account, clear all data
+        2. Session: Current session LLM configuration (provider, model, parameters)
+        3. Other: API key management and model installation for OpenAI and Ollama
+        
+        Features:
+            - Provider selection (OpenAI vs Ollama)
+            - Model parameter configuration (temperature, context length)
+            - Account management options (delete, logout, clear data)
+            - API key secure input
+            - Ollama model pulling functionality
         """
         general_tab, session_tab, other_tab = st.tabs(["Home", "Session", "Other"])
         with general_tab:
             st.header("General Settings")
             # Now we need to add what they do directly on the right 
-            delete_tab, logout, change = st.columns(3)
+            delete_tab, logout, clear_tab = st.columns(3)
             # Deleting chat history for this account
             if delete_tab.button("Delete Chat", key="delete_button", help="Permanently remove all chat history for this account"):
                 user_chats =  self.account_page.chats.get_user_chats(st.session_state.user_id)
@@ -354,6 +492,42 @@ class ChatbotApp:
                     self.account_page.logout_db()
 
             st.divider() 
+            if clear_tab.button("Clear All Data", key="clear_button", help="Permanently remove all chats, images, and tables for this account"):
+                user_id = st.session_state.user_id
+                user_chats = self.account_page.chats.get_user_chats(user_id)
+                chat_count = 0
+                if user_chats:
+                    for chat in user_chats:
+                        chat_id = chat[0]
+                        if self.account_page.chats.delete_chat(chat_id):
+                            chat_count += 1
+                try:
+                    self.img_datadb.delete_image(user_id)
+                    img_deleted = True
+                except Exception as e:
+                    img_deleted = False
+                    st.error(f"Failed to delete images: {str(e)}")
+
+                try:
+                    self.table_datadb.delete_table(user_id)
+                    tbl_deleted = True
+                except Exception as e:
+                    tbl_deleted = False
+                    st.error(f"Failed to delete tables: {str(e)}")
+
+                st.success(f"Deleted {chat_count} chat(s), "
+                        f"{'all images' if img_deleted else 'no images'}, "
+                        f"{'all tables' if tbl_deleted else 'no tables'} for this account.")
+                time.sleep(1)
+
+                if "sessions" in st.session_state:
+                    st.session_state.sessions.clear()
+                    st.session_state.chat_counter = 0 
+
+                if not st.session_state.sessions:
+                    st.session_state.active_page = "home"
+                    st.session_state.current_session_id = None
+                    st.rerun()
             
         if st.session_state.active_page == "chat":
             with session_tab:
@@ -448,37 +622,77 @@ class ChatbotApp:
                         st.warning("⚠️ Please enter a model name before pulling.")
                     
     def retrieve_model(self):
-        chat_settings = st.session_state.sessions[st.session_state.current_session_id].get("chat_settings", {})
-        handler = None
-        if not chat_settings:
-            st.warning("⚠️ Chat settings not configured yet. Using default values.")
-            chat_settings = {}
+        """
+        Create and configure an LLM instance based on current session settings. 
+        
+        Configuration Sources:
+            - Session chat_settings for provider, model, temperature, context length
+            - Session state for API keys
+            - Fallback to default values if settings not configured
+            
+        Supported Providers:
+            - OpenAI: Requires API key in session state
+            - Ollama: Uses local Ollama server
+            
+        Raises:
+            Logs errors and displays user-friendly error messages for:
+            - Missing session or settings
+            - Invalid provider configuration
+            - Missing API keys
+            - Model creation failures
 
-        provider = chat_settings.get("provider", "OpenAI")
-        model_name = chat_settings.get("model_name", "gpt-4.1")
-        temperature = chat_settings.get("temperature", 0.0)
-        max_tokens = chat_settings.get("context_length", 8192)
+        returns
+        -------
+        Union[CHATOpenAI, Chatbot, None]: Configured LLM instance based on provider settings,
+            or None if configuration fails.
+        """
+        try:
+            # Get current session safely
+            current_session = st.session_state.sessions.get(st.session_state.current_session_id)
+            if not current_session:
+                st.error(f"Session {st.session_state.current_session_id} not found")
+                return None
+                
+            chat_settings = current_session.get("chat_settings", {})
+            
+            if not chat_settings:
+                st.warning("⚠️ Chat settings not configured yet. Using default values.")
+                chat_settings = {}
 
-        api_key = None
-        if provider == "OpenAI":
-            api_key = st.session_state.get("openai_api_key")
+            provider = chat_settings.get("provider", "OpenAI")
+            model_name = chat_settings.get("model_name", "gpt-4.1")
+            temperature = chat_settings.get("temperature", 0.0)
+            max_tokens = chat_settings.get("context_length", 8192)
 
-            handler = CHATOpenAI(
-                api_key=api_key,
-                model=model_name,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
+            if provider == "OpenAI":
+                api_key = st.session_state.get("openai_api_key")
+                if not api_key:
+                    self.popover_messages("OpenAI API key not found in session state", "ERROR")
+                    return None
+                    
+                handler = CHATOpenAI(
+                    api_key=api_key,
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
 
-        elif provider == "Ollama":
-
-            handler = Chatbot(
-                base_url=self._base_url,
-                model=model_name,
-                context_length=max_tokens
-            )
-        return handler
-
+            elif provider == "Ollama":
+                handler = Chatbot(
+                    base_url=self._base_url,
+                    model=model_name,
+                    context_length=max_tokens
+                )
+            else:
+                self.popover_messages(f"Unknown provider: {provider}", "ERROR")
+                return None
+                
+            return handler
+            
+        except Exception as e:
+            self.popover_messages(f"Error retrieving model: {str(e)}", "ERROR")
+            self.logger.error(f"Error in retrieve_model: {e}", exc_info=True)
+            return None
 
     @st.dialog("Embeddings saving...")
     def render_embeddings_popup(self, file:str, file_hash:str):
@@ -486,95 +700,98 @@ class ChatbotApp:
         chatbot_image,chatbot_table = None,None
 
         with st.status(label="Processing the current document...",expanded=True,state="running") as status:
-            session = st.session_state.sessions[st.session_state.current_session_id]
-            filename = session.get("filename", None)
-            if not self.account_page.chats.pdf_exist(filename):
-                saved = self.account_page.chats.add_pdf_ref(chat_id=st.session_state.current_session_id,pdf_ref=file_hash,pdf_filename=filename)
-                # Solution : https://discuss.streamlit.io/t/st-toast-appears-now-on-the-top-right-corner/68854
-                # The toast appears for 4 seconds and on the top right corner so instead we do this 
-                if saved:
-                    st.write("PDF reference added successfully")
-                else:
-                    st.write("Failed to add PDF reference.")
-                chunks = self.pdf_reader.read_pdf(file)
-                texts, tables, images_64_list = self.pdf_reader.separate_elements(chunks)
-                chunked_texts, doc_ids = split_chuncks(texts,filename)
+            try:
+                session = st.session_state.sessions[st.session_state.current_session_id]
+                filename = session.get("filename", None)
+                if not self.account_page.chats.pdf_exist(filename):
+                    saved = self.account_page.chats.add_pdf_ref(chat_id=st.session_state.current_session_id,pdf_ref=file_hash,pdf_filename=filename)
+                    # Solution : https://discuss.streamlit.io/t/st-toast-appears-now-on-the-top-right-corner/68854
+                    # The toast appears for 4 seconds and on the top right corner so instead we do this 
+                    if saved:
+                        st.write("PDF reference added successfully")
+                    else:
+                        st.write("Failed to add PDF reference.")
+                    chunks = self.pdf_reader.read_pdf(file)
+                    texts, tables, images_64_list = self.pdf_reader.separate_elements(chunks)
+                    chunked_texts, doc_ids = split_chuncks(texts,filename)
 
-                session["texts"] = chunked_texts
-                session["doc_ids"] = doc_ids
-                session["tables"] = tables
-                session["images"] = images_64_list
+                    session["texts"] = chunked_texts
+                    session["doc_ids"] = doc_ids
+                    session["tables"] = tables
+                    session["images"] = images_64_list
 
-                st.write("Document processed: Text, Tables, and Images extracted.")
+                    st.write("Document processed: Text, Tables, and Images extracted.")
 
-                file_paths = self.save_through_thread(func=self._save_images, img=images_64_list,filename=filename)
-                if file_paths is None:
-                    self.logger.error("File paths were not retrieved from the thread")
-                
-                if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
-                    chatbot_image = Chatbot(
-                        base_url=self._base_url,
-                        model="llava:7b",
-                        context_length=self._context_length
-                    )
-                else:
-                    chatbot_image = self.retrieve_model() 
-
-                if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
-                    chatbot_table = Chatbot(
-                        base_url=self._base_url,
-                        model="llava:7b",
-                        context_length=self._context_length
-                    )
-                else:
-                    chatbot_table = self.retrieve_model() 
-
-                image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot_image)
-                table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot_table)
-
-                if hasattr(chatbot_image, "unload_model") and callable(getattr(chatbot_image, "unload_model")):
-                    chatbot_image.unload_model()
-
-                if hasattr(chatbot_table, "unload_model") and callable(getattr(chatbot_table, "unload_model")):
-                    chatbot_table.unload_model()
-
-                del chatbot_table
-                del chatbot_image 
-
-                if image_summaries or table_summaries:
-                    st.write("Summaries have been generated successfully for images and tables")
-
-                # Save the summaries and the text
-                if chunked_texts:
-                    self.__vectorstore.populate_vector(documents=chunked_texts)
-                    st.write("Texts have been uploaded successfully")
-                if image_summaries:
-                    img_ids = [str(uuid.uuid4()) for _ in images_64_list]
-                    session["img_ids"] = img_ids
-                    summary_docs = [
-                        Document(page_content=s, metadata={id_key: img_ids[i], "filename":filename})
-                            for i, s in enumerate(image_summaries)
-                    ]
-                    self.__vectorstore.populate_vector(documents=summary_docs)
-                    st.write("Image summaries have been uploaded successfully")
+                    file_paths = self.save_through_thread(func=self._save_images, img=images_64_list,filename=filename)
+                    if file_paths is None:
+                        self.logger.error("File paths were not retrieved from the thread")
                     
-                if table_summaries:
-                    tab_ids = [str(uuid.uuid4()) for _ in tables]
-                    session["tab_ids"] = tab_ids
-                    table_docs = [
-                        Document(page_content=s, metadata={id_key: tab_ids[i], "filename":filename})
-                            for i, s in enumerate(table_summaries)
-                    ]
-                    self.__vectorstore.populate_vector(documents=table_docs)
-                    st.write("Table summaries have been uploaded successfully")
-                
-                self._save_image_to_db() # Save the images to the db 
-                self._save_table_to_db()
-                unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings used by the vectorstore
-                # torch.cuda.empty_cache() # to remove the model used by the unstructured module 
-                # Update Session State
-                session["embeddings_ready"] = True
-                session["saved"] = True
+                    if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
+                        chatbot_image = Chatbot(
+                            base_url=self._base_url,
+                            model="llava:7b",
+                            context_length=self._context_length
+                        )
+                    else:
+                        chatbot_image = self.retrieve_model() 
+
+                    if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] == {}:
+                        chatbot_table = Chatbot(
+                            base_url=self._base_url,
+                            model="llava:7b",
+                            context_length=self._context_length
+                        )
+                    else:
+                        chatbot_table = self.retrieve_model() 
+
+                    image_summaries = self.pdf_reader._get_summaries_image(images=images_64_list,chatbot=chatbot_image)
+                    table_summaries = self.pdf_reader._get_summaries_table(tables = tables,chatbot=chatbot_table)
+
+                    if hasattr(chatbot_image, "unload_model") and callable(getattr(chatbot_image, "unload_model")):
+                        chatbot_image.unload_model()
+
+                    if hasattr(chatbot_table, "unload_model") and callable(getattr(chatbot_table, "unload_model")):
+                        chatbot_table.unload_model()
+
+                    del chatbot_table
+                    del chatbot_image 
+
+                    if image_summaries or table_summaries:
+                        st.write("Summaries have been generated successfully for images and tables")
+
+                    # Save the summaries and the text
+                    if chunked_texts:
+                        self.__vectorstore.populate_vector(documents=chunked_texts)
+                        st.write("Texts have been uploaded successfully")
+                    if image_summaries:
+                        img_ids = [str(uuid.uuid4()) for _ in images_64_list]
+                        session["img_ids"] = img_ids
+                        summary_docs = [
+                            Document(page_content=s, metadata={id_key: img_ids[i], "filename":filename})
+                                for i, s in enumerate(image_summaries)
+                        ]
+                        self.__vectorstore.populate_vector(documents=summary_docs)
+                        st.write("Image summaries have been uploaded successfully")
+                        
+                    if table_summaries:
+                        tab_ids = [str(uuid.uuid4()) for _ in tables]
+                        session["tab_ids"] = tab_ids
+                        table_docs = [
+                            Document(page_content=s, metadata={id_key: tab_ids[i], "filename":filename})
+                                for i, s in enumerate(table_summaries)
+                        ]
+                        self.__vectorstore.populate_vector(documents=table_docs)
+                        st.write("Table summaries have been uploaded successfully")
+                    
+                    self._save_image_to_db() # Save the images to the db 
+                    self._save_table_to_db()
+                    unload_model(logger=self.logger, model_name="nomic-embed-text:latest") # For the embeddings used by the vectorstore
+                    # torch.cuda.empty_cache() # to remove the model used by the unstructured module 
+                    # Update Session State
+                    session["embeddings_ready"] = True
+                    session["saved"] = True
+            except Exception as e:
+                self.popover_messages(f"Error during embedding approach: {str(e)}", "ERROR")
 
             time.sleep(1) # This is due to the fact that the update is done to fast
             status.update(  
@@ -589,7 +806,10 @@ class ChatbotApp:
         """Displays the chat for the current session."""
         if session_id and chat_type == 0: # Chatbot 
             self.chatbot = self.get_or_create_llm(chat_type=chat_type)
-
+            if self.chatbot is None:
+                self.popover_messages(f"Didn't manage to retreieve the chatbot, please check", "ERROR")
+                return 
+            
             session = st.session_state.sessions[session_id]
             # self.display_messages(messages=session["messages"])
             for message in session["messages"]:
@@ -608,8 +828,7 @@ class ChatbotApp:
                 uploaded_file = st.file_uploader("Choose a PDF file")# accept_multiple_files=True
                 if uploaded_file:
                     uploaded_file_hash = get_file_hash(uploaded_file)
-                    # self.img_datadb.delete_image()
-                    # self.table_datadb.delete_table()
+
                     if "filename" not in session:
                         session["filename"] = get_pdf_title(uploaded_file.getvalue())
                     
@@ -635,6 +854,9 @@ class ChatbotApp:
                     self.display_pdf(uploaded_file, width=ui_width - 10)
 
                     self.chatbot = self.get_or_create_llm(chat_type, session_id)
+                    if self.chatbot is None:
+                        self.popover_messages(f"Didn't manage to retreieve the chatbot, please check", "ERROR")
+                        return 
 
             with col2:  # Chat section
                 # session = st.session_state.sessions[st.session_state.current_session_id]
@@ -652,7 +874,10 @@ class ChatbotApp:
             uploaded_file = None
 
             self.chatbot = self.get_or_create_llm(chat_type, session_id)
-
+            if self.chatbot is None:
+                self.popover_messages(f"Didn't manage to retreieve the chatbot, please check", "ERROR")
+                return
+             
             with agent_col1:
                 uploaded_file = st.file_uploader("Choose a PDF file") # accept_multiple_files=True
                 container_key = f"chat_container_agent_{session_id}"
@@ -916,26 +1141,30 @@ class ChatbotApp:
 
     def get_or_create_llm(self, chat_type, session_id=None):
         """Retrieves or creates an LLM instance for the given chat type and session."""
-        if chat_type not in st.session_state.llm_instances:
-            st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
-        if "last_chat_settings" not in st.session_state:
-            st.session_state.last_chat_settings = {}
+        try:
+            if chat_type not in st.session_state.llm_instances:
+                st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
+            if "last_chat_settings" not in st.session_state:
+                st.session_state.last_chat_settings = {}
 
-        if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] != st.session_state.last_chat_settings.get(chat_type):
-            # Force rebuild
-            st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
-            st.session_state.last_chat_settings[chat_type] = st.session_state.sessions[st.session_state.current_session_id]["chat_settings"].copy()
+            if st.session_state.sessions[st.session_state.current_session_id]["chat_settings"] != st.session_state.last_chat_settings.get(chat_type):
+                # Force rebuild
+                st.session_state.llm_instances[chat_type] = {} if chat_type == 2 else None
+                st.session_state.last_chat_settings[chat_type] = st.session_state.sessions[st.session_state.current_session_id]["chat_settings"].copy()
 
-        if chat_type == 2:
-            # PDF-specific LLM tied to session_id
-            if session_id not in st.session_state.llm_instances[chat_type]:
-                st.session_state.llm_instances[chat_type][session_id] = self.create_llm(chat_type, session_id)
-            return st.session_state.llm_instances[chat_type][session_id]
-        else:
-            # Shared LLM for chat_type 0 or 1
-            if st.session_state.llm_instances[chat_type] is None:
-                st.session_state.llm_instances[chat_type] = self.create_llm(chat_type)
-            return st.session_state.llm_instances[chat_type]
+            if chat_type == 2:
+                # PDF-specific LLM tied to session_id
+                if session_id not in st.session_state.llm_instances[chat_type]:
+                    st.session_state.llm_instances[chat_type][session_id] = self.create_llm(chat_type, session_id)
+                return st.session_state.llm_instances[chat_type][session_id]
+            else:
+                # Shared LLM for chat_type 0 or 1
+                if st.session_state.llm_instances[chat_type] is None:
+                    st.session_state.llm_instances[chat_type] = self.create_llm(chat_type)
+                return st.session_state.llm_instances[chat_type]
+        except Exception as e:
+            self.popover_messages(f"Failed to create LLM instance: {str(e)}", "ERROR")
+            return None
 
     def create_llm(self, chat_type: int = 0, session_id: str = None):
         """Creates or retrieves the LLM for the specified chat type."""
@@ -951,6 +1180,10 @@ class ChatbotApp:
         else:
             chatbot = self.retrieve_model() 
 
+        if chatbot is None:
+            self.popover_messages(f"The core LLM model is not present either ollama server is not running or the API key is wrong", "ERROR")
+            return 
+        
         if chat_type == 2:  # Chat with PDF
             # chatbot = Chatbot(model="llama3.2:3b") # Change to llama3.2
             llm = None
@@ -1167,7 +1400,6 @@ class ChatbotApp:
         new_file_paths = [file_path for file_path in file_paths if file_path not in list(existing_file_paths)]
         if not new_file_paths:
             return
-        
         # Retrieve the current session
         new_images = {}
         img_ids_to_add = session.get("img_ids", [])  
@@ -1175,11 +1407,15 @@ class ChatbotApp:
         if len(new_file_paths) != len(img_ids_to_add):
             raise ValueError("The number of file paths does not match the number of img_ids.")
         new_images = dict(zip(img_ids_to_add, new_file_paths))
-        if new_images:
-            self.img_datadb.add_image(new_images) 
+        try:
+            if new_images:
+                self.img_datadb.add_image(st.session_state.user_id, new_images) 
 
-            # Update the session state with the new image db
-            st.session_state.image_data = self.img_datadb.get_chat_image()
+                # Update the session state with the new image db
+                st.session_state.image_data = self.img_datadb.get_chat_image(st.session_state.user_id)
+        except Exception as e:
+            self.popover_messages(f"Couldn't save the images to db: {e}", "ERROR")
+            return 
 
     def _save_table_to_db(self):
         # Add the tables to the db 
@@ -1191,11 +1427,15 @@ class ChatbotApp:
         tab_dict = dict(zip(tab_ids, tables_html))
 
         # Add the tables to the db 
-        if tab_dict:
-            self.table_datadb.add_table(tables=tab_dict)
+        try:
+            if tab_dict:
+                self.table_datadb.add_table(user_id=st.session_state.user_id, tables=tab_dict)
 
-            # Update the session state with the new table db
-            st.session_state.table_data = self.table_datadb.get_chat_table()
+                # Update the session state with the new table db
+                st.session_state.table_data = self.table_datadb.get_chat_table(user_id= st.session_state.user_id)
+        except Exception as e:
+            self.popover_messages(f"Couldn't save the tables to db: {e}", "ERROR")
+            return
 
     def render_multi_modal_response(self, response:Dict, container= None):
         """Renders the chat message for images and text when dicussing with pdf"""
@@ -1391,8 +1631,9 @@ class ChatbotApp:
                     self.logger.debug(f"No new messages to save for session {session_id}")
                     
             except Exception as e:
-                st.error(f"Error saving chat: {str(e)}")
                 self.logger.error(f"Error saving chat for session {session_id}: {str(e)}")
+                self.popover_messages(f"Error saving chat for session {session_id}: {e}", "ERROR")
+                return 
 
     def save_through_thread(self, func:Callable, *args, **kwargs):   # Solution : https://github.com/streamlit/streamlit/issues/1326 , https://github.com/streamlit/streamlit/issues/8490 
         """
