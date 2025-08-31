@@ -1,17 +1,19 @@
 # LLM Chatbot Project
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Streamlit](https://img.shields.io/badge/streamlit-1.41.0-red)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
-3. [Installation](#installation)
-4. [Usage](#usage)
-5. [Features](#features)
-6. [Dependencies](#dependencies)
-7. [Configuration](#configuration)
-8. [Contributing](#contributing)
-9. [License](#license)
-10. [Troubleshooting](#troubleshooting)
-11. [Improvements](#improvements)
+3. [Quick start](#quick-start)
+4. [Features](#features)
+5. [Dependencies](#dependencies)
+6. [Contributing](#contributing)
+7. [License](#license)
+8. [Troubleshooting](#troubleshooting)
+9. [Improvements](#improvements)
 
 ## Introduction
 
@@ -34,7 +36,7 @@ llm/
 ├── app.py                  # Entry point for running the application
 │
 ├── config/
-│   └── config.yaml         # Centralized configuration settings (API keys, model configs, etc.)
+│   └── template.yaml       # Centralized file containing all the template used in this project
 │
 ├── database/
 │   ├── app.db              # Application-specific database
@@ -77,26 +79,31 @@ llm/
 └── README.md               # Main project documentation
 ```
 
-## Installation
+## Quick start
+```
+1. Clone the repository
+git clone https://github.com/yourusername/Chatbot.git
+cd llm-chatbot
 
-1. Clone the repository:  git clone https://github.com/yourusername/llm-chatbot.git
-
-2. Create a virtual environment:
-``
+# 2. Create a virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows, use venv\Scripts\activate
-``
-or 
-``conda create -n venv python = 3.10(example) && 
-conda activate venv 
-``
+source venv/bin/activate   # On Windows: venv\Scripts\activate
 
-3. Install the required dependencies: `` pip install -r requirements.txt``
+# 3. Install dependencies
+pip install -r requirements.txt
 
+# 4. Start the server
+./src/entrypoint.sh
 
-## Usage
+# 5. Run the app
+streamlit run src/main.py
+```
 
-To run the chatbot application, execute the following command from the project root: ``streamlit run src/main.py``
+Right now, we have a sequential execution problem where we need to manually start the server first, then run the Streamlit application separately. This happens because:
+- Streamlit is blocking/sequential: When streamlit run executes, it blocks the current thread and doesn't return control to continue executing subsequent code
+- Manual coordination required: Users must remember to start the server in one terminal, then run the Streamlit app in another terminal
+- Poor user experience: This creates friction and potential for errors (forgetting to start the server, wrong order, etc.)
+
 ## Features
 
 - **Interactive Chatbot with LLMs**: Primarily built using Ollama (LLaMA 3.2 – 3B model) for general conversations, LLaVA-7B for image-related tasks, and the OpenAI API for enhanced performance.
@@ -136,9 +143,6 @@ While poppler-utils can be installed via pip, we recommend using Conda for the o
 
 For a complete list of dependencies, refer to the `requirements.txt` file.
 
-## Configuration
-
-Any configuration such as the temperature of the models, the possibility of adding a new ollama model. 
 
 ## Contributing
 
@@ -178,6 +182,7 @@ If you encounter tokenizer-related errors, you can manually install them using:
     python -m ntlk.downloader name of the tokenizer or tagger 
 
 Example :   `` python -m ntlk.downloader punk_tab ``
+
 
 ## Improvements
 

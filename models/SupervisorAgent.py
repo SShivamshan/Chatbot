@@ -62,7 +62,7 @@ class SupervisorAgent(BaseModel):
     def _create_template(self, template_name: str) -> PromptTemplate:
         try:
             self.logger.logger.debug("Loading template")
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"][template_name]
             template = template_config["template"]
             input_vars = [var["name"] for var in template_config.get("input_variables", [])]

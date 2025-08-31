@@ -422,7 +422,7 @@ class ChatbotApp:
             if st.session_state.current_session_id:
                 # Offload all the models 
                 self.unload_all_models()
-                # self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force = True)
+                self.save_through_thread(func = self.handle_message_save, session_id = st.session_state.current_session_id,force = True)
 
             self.account_page.logout_db()
 
@@ -1680,7 +1680,9 @@ class ChatbotApp:
         self.logger.info("All models have been unloaded from memory.")
 
     def run(self):
-        """Run the application."""
+        """
+        Run the application.
+        """
         active_page = st.session_state.get("active_page", "account")  # Default to "account" page
         
         if not st.session_state.logged_in:

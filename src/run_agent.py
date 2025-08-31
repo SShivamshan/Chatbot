@@ -2,11 +2,13 @@ import sys
 sys.path.append(".")
 import argparse
 import os
+import re 
 import subprocess
+import platform
 from rich.console import Console
 from models.Model import Chatbot,CHATOpenAI
 from models.SupervisorAgent import SupervisorAgent
-from src.utils import pretty_print_answer,pretty_print_query
+from src.utils import pretty_print_answer,pretty_print_query,pretty_print_code,detect_language_lib,parse_flags_and_queries
 
 def check_ollama_model(model_name):
     """
@@ -148,6 +150,23 @@ python main.py  # Uses defaults: llama, llama3.2, task 0
     
     return parser
 
+def clear_screen():
+    
+    # Detect the operating system
+    if platform.system() == "Windows":
+        os.system("cls")  # Windows uses cls
+    else:
+        os.system("clear")  # Linux/macOS uses clear
+
+
+def remove_file_flag(query: str) -> str:
+    """
+    Removes the '/file' flag and everything after it from the query string.
+    """
+    # Regex: match '/file' and everything after it
+    pattern = r"\s*/file\b.*"
+    return re.sub(pattern, "", query).strip()
+
 def main():
     parser = create_parser()
     args = parser.parse_args()
@@ -158,7 +177,7 @@ def main():
         args.model_type = 'gpt-4.1'
     
     validate_args(args)
-
+    console = Console()
     print(f"Configuration:")
     print(f"  Model Provider: {args.model}")
     print(f"  Model Type: {args.model_type}")
@@ -167,8 +186,9 @@ def main():
         print(f"  Ollama Host: {args.host}")
     print(f"  Temperature: {args.temperature}")
     print(f"  Context Length: {args.context_length}")
+    if args.task == 1:
+        console.print("\n[bold red]For local files please use the flag: /file inside the query[/bold red]")
     print("-" * 50)
-    console = Console()
 
     if args.task == 0:
         llm = retrieve_llm(args)
@@ -177,7 +197,12 @@ def main():
             query = input("You: ")
             if query.lower() in ['exit', 'quit', 'bye']:
                 console.print("[bold red]Exiting chat...[/bold red]")
+                if hasattr(llm, "unload_model") and callable(getattr(llm, "unload_model")):
+                    llm.unload_model()
                 break
+            elif query.lower() == 'clear':
+                clear_screen()
+                continue 
             try:
                 pretty_print_query(query,console)
                 answer = llm.invoke(input=query).content
@@ -196,11 +221,23 @@ def main():
             query = input("Task: ")
             if query.lower() in ['exit', 'quit', 'bye']:
                 console.print("[bold red]Exiting Agent chat... [/bold red]")
+                if hasattr(llm, "unload_model") and callable(getattr(llm, "unload_model")):
+                    llm.unload_model() # THis would only offload the llm and not the embeddings
+                    
                 break
+            elif query.lower() == 'clear':
+                clear_screen() 
+                continue
             try:
                 pretty_print_query(query,console)
-                result = agent.run(query,filename=None)
+                flags = parse_flags_and_queries(query)
+                filename = flags.get('/file')
+                if filename:
+                    query = remove_file_flag(query=query) 
+
+                result = agent.run(query,filename=filename)
                 final_answer = ""
+                sources = {}
                 for response in list(result.values()):
                     answer_text = response["final_answer"]
                     # Add to final_answer with proper spacing
@@ -208,7 +245,26 @@ def main():
                         final_answer += " ".join(answer_text)
                     else:
                         final_answer = answer_text
+
+                    if response.get("generated_code"):
+                        sources["code"] = response["generated_code"]
+                    elif response.get("diagram_image"):
+                        sources["diagram"] = response["diagram_image"]
+                    elif response.get("sources"):
+                        sources["sources"] = response.get("sources")
+                    
                 pretty_print_answer(final_answer,console=console)
+                for key, value in sources.items():
+                    if key == "code":
+                        lang = detect_language_lib(value) # Pygments does the detection for us for the type of langage beign detected 
+                        pretty_print_code(value, console, language=lang) # THanks to the Syntax of rich the generated code is better presented 
+                    elif key == "diagram":
+                        pass 
+                    elif key == "sources":
+                        # console.print(f"[bold yellow]Sources:[/bold yellow] {value}")
+                        pass 
+                    # Both of the rendering for the sources(image,tables,urls) and diagram need to be impleemented. 
+                
             except Exception as e:
                 print(f"Error: {e}")
             except KeyboardInterrupt:

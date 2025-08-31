@@ -15,6 +15,8 @@ import subprocess
 from collections import defaultdict
 from dotenv import load_dotenv
 from datetime import datetime
+from pygments.lexers import guess_lexer
+from pygments.util import ClassNotFound
 
 import yaml
 from PIL import Image
@@ -22,6 +24,7 @@ import chromadb
 from pydantic import Field, BaseModel
 from PyPDF2 import PdfReader
 from bs4 import BeautifulSoup
+from rich.syntax import Syntax
 from rich.console import Console
 from rich.panel import Panel
 from sklearn.metrics.pairwise import cosine_similarity
@@ -145,7 +148,7 @@ def unload_model(logger, model_name:str=None, base_url = "http://localhost:11434
 
 def load_ai_template(config_path: str) -> Dict:
     """
-    Load the template present in the config.yaml file
+    Load the template present in the template.yaml file
 
     params
     ------
@@ -153,7 +156,7 @@ def load_ai_template(config_path: str) -> Dict:
 
     returns
     -------
-    Dict: Template configuration loaded from the config.yaml file
+    Dict: Template configuration loaded from the template.yaml file
 
     """
     with open(config_path, 'r') as file:
@@ -201,8 +204,18 @@ class LineListOutputParser(BaseOutputParser[List[str]]):
         lines = text.strip().split("\n")
         return list(filter(None, lines)) 
 
-def get_parent_id(element):
-    """Retrieve the parent ID if available, otherwise use its own element ID."""
+def get_parent_id(element) -> str:
+    """
+    Retrieve the parent ID if available, otherwise use its own element ID.
+    
+    params
+    ------
+    - element(Dict): Dict containing the metadata from which we retrieve the parent id or the element id 
+
+    returns
+    -------
+    str: Parent id of the given element or it's own element
+    """
     return element["metadata"].get("parent_id", element["element_id"])
 
 # Solution : https://github.com/langchain-ai/langchain/issues/6046 , https://github.com/rajib76/langchain_examples/blob/main/examples/how_to_execute_retrievalqa_chain.py 
@@ -215,8 +228,16 @@ class CustomRetriever(BaseRetriever, BaseModel):
 
     def _get_relevant_documents(self, query: str) -> List[Document]:
         """
-        Retrieves the top 5 relevant documents with scores.
-        If `docstore` is available, it enriches metadata with raw content (e.g., raw tables).
+       
+        Retrieve the top 5 most relevant documents for a given query, enriching metadata with scores and optional raw content.
+            
+        params
+        ------
+        - query (str): The search query string used to perform similarity matching against the vectorstore.
+
+        returns
+        -------
+        List[Document]: A list of up to 5 Document objects, each enriched with a 'score' in metadata and optional 'data' from the docstore if available.
         """
         # Perform the similarity search with scores
         docs, scores = zip(*self.vectorstore.similarity_search_with_relevance_scores(query, k=10, score_threshold=0.19))
@@ -242,7 +263,15 @@ class CustomRetriever(BaseRetriever, BaseModel):
         return self._get_relevant_documents(query)
 
 class TemporaryDB:
-    def __init__(self, db_name: str = "default", use_memory: bool = True):
+    def __init__(self, db_name: str = "default", use_memory: bool = True) -> None:
+        """
+        Initialize a temporary or in-memory SQLite database to store key-value pairs.
+
+        params
+        ------
+        - db_name (str): Name of the database file if not using in-memory storage.
+        - use_memory (bool): Whether to use an in-memory database. Defaults to True.
+        """
         self.db_name = db_name
 
         if use_memory:
@@ -262,7 +291,18 @@ class TemporaryDB:
         self.conn.commit()
 
     def add(self, uid: str, value: str) -> bool:
-        """Adds (UUID, value) if not already present. Returns True if added, False if either exists."""
+        """
+        Adds a (UUID, value) pair if it does not already exist.
+
+        params
+        ------
+        - uid (str): Unique identifier for the value.
+        - value (str): The value to store.
+
+        returns
+        -------
+        bool: True if the value was added, False if the UID already exists.
+        """
         if self.exists_by_id(uid):
             return False
         self.cursor.execute("INSERT INTO saved_values (id, value) VALUES (?, ?)", (uid, value))
@@ -270,23 +310,66 @@ class TemporaryDB:
         return True
 
     def exists_by_id(self, uid: str) -> bool:
+        """
+        Check if a value exists in the database by its unique ID.
+
+        params
+        ------
+        - uid (str): Unique identifier to check.
+
+        returns
+        -------
+        bool: True if the ID exists, False otherwise.
+        """
         self.cursor.execute("SELECT 1 FROM saved_values WHERE id = ?", (uid,))
         return self.cursor.fetchone() is not None
 
     def get_by_id(self, uid: str) -> str:
+        """
+        Retrieve the value associated with a given unique ID.
+
+        params
+        ------
+        - uid (str): Unique identifier for the value.
+
+        returns
+        -------
+        str: The stored value if found, None otherwise.
+        """
         self.cursor.execute("SELECT value FROM saved_values WHERE id = ?", (uid,))
         row = self.cursor.fetchone()
         return row[0] if row else None
 
-    def get_all(self) -> list:
+    def get_all(self) -> List:
+        """
+        Retrieve all stored key-value pairs from the database.
+
+        params
+        ------
+        None
+
+        returns
+        -------
+        List: A list of tuples [(id, value), ...] representing all entries.
+        """
         self.cursor.execute("SELECT id, value FROM saved_values")
         return self.cursor.fetchall()
 
     def remove_by_id(self, uid: str):
+        """
+        Remove a value from the database by its unique ID.
+
+        params
+        ------
+        - uid (str): Unique identifier for the value to remove.
+        """
         self.cursor.execute("DELETE FROM saved_values WHERE id = ?", (uid,))
         self.conn.commit()
 
     def __del__(self):
+        """
+        Close the database connection when the object is destroyed.
+        """
         try:
             self.conn.close()
         except Exception:
@@ -302,7 +385,7 @@ class CustomSearchTool(BaseTool):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self,llm:Optional[Any] = None):
+    def __init__(self,llm:Optional[Any] = None) -> None:
         super().__init__()
         load_dotenv()
         tavily_api_key = os.getenv("TAVILY_API_KEY")
@@ -320,7 +403,20 @@ class CustomSearchTool(BaseTool):
             include_image_descriptions=True
         )
 
-    def summarize_content(self,result:dict,query:str,max_words:int = 500):
+    def summarize_content(self,result:dict,query:str,max_words:int = 500) -> str:
+        """
+        Generate a concise summary of content based on a query.
+
+        params
+        ------
+        - result (dict): Dictionary containing the content to summarize (expects 'raw_content' key).
+        - query (str): The search query or topic the summary should focus on.
+        - max_words (int): Maximum number of words allowed in the summary. Defaults to 500.
+
+        returns
+        -------
+        str: A summary of the content relevant to the query, or a message indicating no content is available.
+        """
         summarize_template = """
         You are an expert summarizer.
         Summarize the following content into a clear, accurate, and concise summary, highlighting its relevance to the query.: {query}
@@ -352,9 +448,20 @@ class CustomSearchTool(BaseTool):
 
         return result
 
-    def format_tavily_response(self, raw_response: dict,query:str):
+    def format_tavily_response(self, raw_response: Dict,query:str) -> Dict:
         """
-        Format travily response for the llm usage
+        Format a raw web search response for LLM consumption, filtering and summarizing results.
+
+        params
+        ------
+        - raw_response (Dict): Raw response from a web search, including results and images.
+        - query (str): The search query used to guide content summarization.
+
+        returns
+        -------
+        Dict: Formatted response containing:
+            - 'results': List of dicts with 'title', 'url', and summarized 'content'.
+            - 'images': List of up to 2 dicts with 'url' and 'description' of images.
         """
         # Filter results with score > 0.60
         filtered_results = [
@@ -380,6 +487,17 @@ class CustomSearchTool(BaseTool):
         }
     
     def _run(self, query: Union[str, List[str]]):
+        """
+        Execute a web search for a single query or a list of queries and return formatted results.
+
+        params
+        ------
+        - query (str | List[str]): A single search query string or a list of query strings.
+
+        returns
+        -------
+        dict | list: Formatted search results. Returns a dict for a single query, or a list of dicts for multiple queries.
+        """
         results = []
         if isinstance(query, list):
             for single_query in query:
@@ -403,7 +521,7 @@ class WebscrapperTool(BaseTool):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self,llm:Chatbot):
+    def __init__(self,llm:Chatbot) -> None:
         super().__init__()
         self.llm = llm
         self.embeddings = OllamaEmbeddings(model="nomic-embed-text:latest",
@@ -416,15 +534,13 @@ class WebscrapperTool(BaseTool):
         Parse HTML from the provided URL and extract all structured content
         including titles, subtitles, and text elements using Unstructured's partition_html.
         
-        Parameters
-        ----------
-        url : str
-            The URL of the website to scrape.
+        params
+        ------
+        url(str): The URL of the website to scrape.
             
-        Returns
+        returns
         -------
-        List[Element]
-            A list of unstructured elements (Title, NarrativeText, ListItem, etc.)
+        List[Element] A list of unstructured elements (Title, NarrativeText, ListItem, etc.)
             extracted from the HTML content, preserving document structure.
         """
         try:
@@ -472,22 +588,28 @@ class WebscrapperTool(BaseTool):
         """
         Extracts the first <h1> tag inside the main content.
         
-        Parameters
-        ----------
-        content : BeautifulSoup
-            The main content area of the page.
+        params
+        ------
+        content(BeautifulSoup): The main content area of the page.
 
-        Returns
+        returns
         -------
-        str
-            The text of the first <h1> found, or an empty string if not present.
+        str The text of the first <h1> found, or an empty string if not present.
         """
         h1_tag = content.find("h1")
         return h1_tag.get_text(strip=True) if h1_tag else ""
 
     def _extract_main_content(self, soup):
         """
-        Enhanced content extraction with better fallback strategies.
+        Extract the main content from an HTML soup using semantic tags, CMS patterns, and fallback strategies.
+
+        params
+        ------
+        - soup (BeautifulSoup): Parsed HTML content.
+
+        returns
+        -------
+        Tag: The HTML element containing the main content, or the best fallback available.
         """
         content_selectors = [
             # Semantic HTML5 tags
@@ -538,10 +660,15 @@ class WebscrapperTool(BaseTool):
         # Final fallback: use body or entire soup
         return soup.find("body") or soup
 
-    def _clean_content(self, content):
+    def _clean_content(self, content) -> None:
         """
-        Remove noise while preserving semantic structure.
+        Remove noise elements such as ads, scripts, headers, footers, and comments while preserving semantic content.
+
+        params
+        ------
+        - content (Tag): HTML content element to clean.
         """
+
         # Tags to completely remove
         noise_tags = [
             "script", "style", "noscript",
@@ -570,7 +697,18 @@ class WebscrapperTool(BaseTool):
     
 
     def summarize_text(self, title, text) -> str:
-    
+        """
+        Summarize a given text section with respect to its title using an LLM.
+
+        params
+        ------
+        - title (str): Section title providing context for the summary.
+        - text (str): Text content to summarize.
+
+        returns
+        -------
+        str: The generated summary of the text section.
+        """
         prompt = PromptTemplate(
             template=f"Given the section title: '{title}', summarize the following text:\n{text}",
             input_variables=["text","title"]
@@ -579,6 +717,19 @@ class WebscrapperTool(BaseTool):
         return self.llm.invoke(prompt.format(text=text, title=title))
 
     def identify_relevant_passages(self, elements: List[Element], keywords: List[str], threshold: float = 0.5) -> List[Element]:
+        """
+        Identify elements whose content is semantically relevant to a set of keywords.
+
+        params
+        ------
+        - elements (List[Element]): List of HTML elements or text sections to evaluate.
+        - keywords (List[str]): Keywords to match against content.
+        - threshold (float): Minimum cosine similarity required for relevance. Defaults to 0.5.
+
+        returns
+        -------
+        List[Element]: Subset of elements deemed relevant to the keywords.
+        """
         if not keywords:
             return []
 
@@ -601,11 +752,33 @@ class WebscrapperTool(BaseTool):
         return relevant_elements
     
     def embed_text(self, text: str) -> List[float]:
-        # Example: OpenAI API or other local model
+        """
+        Convert text into a numerical embedding vector using the configured embedding model.
+
+        params
+        ------
+        - text (str): Text to embed.
+
+        returns
+        -------
+        List[float]: Embedding vector representing the input text.
+        """
         return self.embeddings.embed_query(text)
 
     def chunk_large_text(self, title:str, elements: List, max_tokens: int = 1024) -> List[str]:
-        
+        """
+        Split a large text into smaller chunks for easier processing or summarization.
+
+        params
+        ------
+        - title (str): Section title for context.
+        - elements (List): List of text-containing elements to combine and split.
+        - max_tokens (int): Maximum tokens per chunk. Defaults to 1024.
+
+        returns
+        -------
+        List[Dict]: List of dictionaries containing 'title' and 'text' for each chunk.
+        """
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=max_tokens,
             chunk_overlap=50
@@ -615,6 +788,17 @@ class WebscrapperTool(BaseTool):
         return [{"title": title, "text": chunk} for chunk in chunks]
     
     def generate_summaries(self, relevant_sections) -> List[Dict]:
+        """
+        Generate summaries for a list of relevant sections, optionally chunking large sections.
+
+        params
+        ------
+        - relevant_sections (List[Dict]): List of sections, each with 'title' and 'elements'.
+
+        returns
+        -------
+        List[Dict]: List of summaries with keys 'title' and 'summary' for each section.
+        """
         summaries = []
         title = ""
         section_summary = ""
@@ -633,6 +817,18 @@ class WebscrapperTool(BaseTool):
         return summaries
 
     def _run(self, keywords: Union[str], url: str) -> List[Dict]:
+        """
+        Parse HTML from a URL, extract content, identify relevant passages by keywords, and summarize.
+
+        params
+        ------
+        - keywords (str | List[str]): Keywords to filter relevant passages. If None, summarizes all content.
+        - url (str): URL of the web page to process.
+
+        returns
+        -------
+        List[Dict]: List of relevant sections or summarized content, structured as dictionaries.
+        """
         elements,title = self.parse_html(url=url)
         keywords = [keywords] if isinstance(keywords, str) else (keywords if isinstance(keywords, list) and keywords else None)
 
@@ -661,7 +857,7 @@ class CodeGeneratorTool(BaseTool):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self,llm:Chatbot):
+    def __init__(self,llm:Chatbot) -> None:
         super().__init__()
         self.llm = llm
 
@@ -669,13 +865,15 @@ class CodeGeneratorTool(BaseTool):
         """
         Uses an LLM to generate Python code based on the query and structured steps.
 
-        Args:
-            query (str): The programming task description.
-            steps (List[str]): A structured sequence of steps to implement the solution.
-            chat_history(str): THe previously generated code history 
+        params
+        ------
+        - query (str): The programming task description.
+        - steps (List[str]): A structured sequence of steps to implement the solution.
+        - chat_history(str): THe previously generated code history 
 
-        Returns:
-            str: The generated Python code.
+        returns
+        -------
+        str: The generated Python code.
         """
         steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(steps))
         prompt = self._generate_prompt()
@@ -687,12 +885,13 @@ class CodeGeneratorTool(BaseTool):
         """
         Formats the query and steps into a structured prompt for the LLM.
 
-        Returns:
-            str: A formatted prompt.
+        returns
+        -------
+        str: A formatted prompt.
         """
         
         try:
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"]["Code_generator_template"]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
@@ -713,12 +912,23 @@ class CodeCorrectorTool(BaseTool):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self, llm: Chatbot):
+    def __init__(self, llm: Chatbot) -> None:
         super().__init__()
         self.llm = llm
 
     def _run(self,code,feedbacks:List[Dict]) -> str:
-        
+        """
+        Apply major feedback corrections to a code snippet using an LLM.
+
+        params
+        ------
+        - code (str): The source code to correct.
+        - feedbacks (List[Dict]): List of feedback dictionaries containing 'issue', 'recommendation', and 'severity'.
+
+        returns
+        -------
+        str: Corrected code generated by the LLM based on the major feedback steps.
+        """
         steps_text = ""
         for feedback in feedbacks:
             if feedback.get("severity") == "Major":
@@ -731,8 +941,19 @@ class CodeCorrectorTool(BaseTool):
         return response
 
     def _generate_correction_prompt(self) -> PromptTemplate:
+        """
+        Load and construct a code correction prompt template from configuration.
+
+        returns
+        -------
+        PromptTemplate: A PromptTemplate object ready to be used with the LLM for code correction.
+
+        raises
+        ------
+        ValueError: If the template cannot be loaded or initialized.
+        """
         try:
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"]["Code_correction_template"]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
@@ -754,17 +975,19 @@ class CodeReviewTool(BaseTool):
         super().__init__()
         self.llm = llm
 
-    def _run(self, code: str) -> dict:
+    def _run(self, code: str) -> Dict:
         """
         Analyzes the provided code and returns a structured critique.
 
-        Args:
-            code (str): The generated Python code to review.
+        params
+        ------
+        - code (str): The generated Python code to review.
 
-        Returns:
-            dict: A JSON response containing:
-                  - critique_feedback (list): Detailed areas of improvement.
-                  - is_code_valid (bool): Whether the code is production-ready.
+        returns
+        -------
+        Dict: A JSON response containing:
+            - critique_feedback (list): Detailed areas of improvement.
+            - is_code_valid (bool): Whether the code is production-ready.
         """
         # Generate the LLM prompt
         prompt = self._generate_review_prompt()
@@ -777,14 +1000,16 @@ class CodeReviewTool(BaseTool):
         """
         Generates a structured prompt for code review.
 
-        Args:
-            code (str): The code snippet to be reviewed.
+        params
+        ------
+        - code(str): The code snippet to be reviewed.
 
-        Returns:
-            str: A structured prompt for the LLM.
+        returns
+        -------
+        str: A structured prompt for the LLM.
         """
         try:
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"]["Code_review_tempalte"]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
@@ -811,11 +1036,18 @@ class CodeDiagramCreator(BaseTool):
         super().__init__()
         self.llm = llm
     
-    def _run(self, query: str):
+    def _run(self, query: str) -> Dict:
         """
-        Generates a diagram from a given code snippet.
-        """
+        Generate a diagram or structured representation based on a given code snippet or query.
 
+        params
+        ------
+        - query (str): The code snippet or textual description used to generate the diagram.
+
+        returns
+        -------
+        Dict: The structured output or diagram generated by the LLM, parsed as JSON.
+        """
         prompt = self._generate_review_prompt()
         llm_chain = prompt | self.llm | JsonOutputParser()
 
@@ -835,7 +1067,7 @@ class CodeDiagramCreator(BaseTool):
             str: A structured prompt for the LLM.
         """
         try:
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"]["Code_diagram_template"]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
@@ -848,9 +1080,6 @@ class CodeDiagramCreator(BaseTool):
     
 
     def _arun(self, query: str):
-        """
-        This tool does not support asynchronous execution.
-        """
         raise NotImplementedError("This tool does not support async")
 
 #========================================================================================================= Other functions =========================================================================================================#
@@ -870,9 +1099,12 @@ def parse_flags_and_queries(input_text: str) -> dict[str, str]:
         dict: A dictionary where keys are flags (e.g., '/code') and values are the queries.
     """
     input_text = input_text.strip()
-    pattern = r"(\/\w+)([^\/]*)"
     
-    matches = re.findall(pattern, input_text)
+    # Match a flag and capture everything until the next flag or end of string
+    pattern = r"(\/\w+)\s+(.*?)(?=\s+\/\w+|$)"
+    
+    matches = re.findall(pattern, input_text, re.DOTALL)
+    
     flag_query_dict = {}
     
     for flag, query in matches:
@@ -880,7 +1112,7 @@ def parse_flags_and_queries(input_text: str) -> dict[str, str]:
     
     return flag_query_dict
 
-def pretty_print_query(query,console:Console):
+def pretty_print_query(query,console:Console) -> None:
     """
     Prints the user query in a formatted panel.
     """
@@ -893,17 +1125,13 @@ def pretty_print_query(query,console:Console):
     )
     console.print(panel)
 
-def pretty_print_answer(answer,console:Console):
+def pretty_print_answer(answer,console:Console) -> None:
     """
     Prints the given answer in a formatted panel using the 'rich' library.
 
     params
     ------
         - answer (str): The answer to be printed.
-
-    returns
-    -------
-        None. The function prints the answer in a formatted panel.
     """
     timestamp = datetime.now().strftime("%H:%M:%S")
     panel = Panel.fit(
@@ -913,6 +1141,26 @@ def pretty_print_answer(answer,console:Console):
         padding=(1, 2)
     )
     console.print(panel)
+
+def pretty_print_code(code: str, console: Console, language: str = "python") -> None:
+    """
+    Pretty print code with syntax highlighting.
+
+    params
+    ------
+    - code(str): The source code to display.
+    - console(console): Rich Console instance for output.
+    - language(str): Programming language for syntax highlighting (default is 'python').
+    """
+    syntax = Syntax(code, language, theme="monokai", line_numbers=True)
+    console.print(syntax)
+
+def detect_language_lib(code: str) -> str:
+    try:
+        lexer = guess_lexer(code)
+        return lexer.name.lower()
+    except ClassNotFound:
+        return None
 
 def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Document, str]]:
     """
@@ -927,7 +1175,7 @@ def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Doc
 
     returns
     -------
-        List[Union[Document, str]]: A list containing the top `k` unique Documents (sorted by highest score) 
+    List[Union[Document, str]]: A list containing the top `k` unique Documents (sorted by highest score) 
                                     plus any strings that were present in the original list.
     """
     # Separate Document instances and strings
@@ -961,6 +1209,21 @@ def deduplicate(docs: List[Union[Document, str]], k: int = 10) -> List[Union[Doc
     return sorted_docs + string_items
     
 def get_ollama_model_details(model_name: str, url:str = "http://localhost:11434/api/show"):
+    """
+    Retrieve detailed information about a specified Ollama model from the local API.
+
+    params
+    ------
+    - model_name (str): Name of the Ollama model to query.
+    - url (str): URL of the Ollama API endpoint. Defaults to "http://localhost:11434/api/show".
+
+    returns
+    -------
+    Dict | None: Dictionary containing the model's architecture, parameter size, context length,
+                 embedding length, and quantization level. Returns None if the request fails
+                 or the response cannot be parsed.
+    """
+
     payload = {"model": model_name}
     
     try:
@@ -1010,6 +1273,22 @@ class Vectordb:
         return cls._instance
 
     def __init__(self, NAME: str = None) -> None:
+        """
+        Initialize a persistent vector database client with embeddings and logging.
+
+        params
+        ------
+        - NAME (str): Optional name for the Chroma collection. Defaults to "knowledge_base" if None.
+
+        notes
+        -----
+        - Sets up Ollama embeddings with a local server.
+        - Ensures the database directory exists.
+        - Initializes a persistent Chroma client and collection.
+        - Sets up a vector store for embedding-based operations.
+        - Initializes logging.
+        - Skips re-initialization if already initialized.
+        """
         if hasattr(self, 'initialized'):
             return  # Already initialized, skip re-init
 
@@ -1060,7 +1339,7 @@ class Vectordb:
 
         returns
         -------
-            bool: True if all documents are added to the vector store successfully, False otherwise
+        bool: True if all documents are added to the vector store successfully, False otherwise
         """
         
         try:
@@ -1094,7 +1373,7 @@ class Vectordb:
 
         returns
         -------
-            List[Document]: List of documents that match the search query, up to 'k' documents.
+        List[Document]: List of documents that match the search query, up to 'k' documents.
         """
         # Search for similarity between documents in the knowledge base and the query
         try:
@@ -1125,13 +1404,13 @@ class PDF_Reader:
         )
         self.logger = logging.getLogger(__name__)
 
-    def read_pdf(self, filename: BytesIO):
+    def read_pdf(self, filename: Union[BytesIO,str]):
         """
         Read and partition a PDF file into chunks. It extracts tables, images, and text with specific chunking strategies.
 
         params
         ------
-            filename (BytesIO): A BytesIO object containing the PDF file to be read and partitioned.
+            filename Union[BytesIO,str]: A BytesIO object containing the PDF file to be read and partitioned.
 
         returns
         -------
@@ -1147,10 +1426,16 @@ class PDF_Reader:
         The function uses a temporary file to store the PDF content before processing.
         The temporary file is deleted after the partitioning is complete.
         """
-        assert filename.name.endswith('.pdf'), "Given file should be a .pdf"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                temp_file.write(filename.read())
-                temp_filename = temp_file.name
+        if isinstance(filename,str):
+            assert filename.endswith('.pdf'), "Given file should be a .pdf"
+            temp_filename = filename
+
+        elif isinstance(filename, BytesIO):
+            assert filename.name.endswith('.pdf'), "Given file should be a .pdf"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                    temp_file.write(filename.read())
+                    temp_filename = temp_file.name
+        
         try:
             chunks = partition_pdf(
                 filename=temp_filename,
@@ -1170,7 +1455,9 @@ class PDF_Reader:
             for element in chunks:
                 element.metadata.filename = filename
 
-            os.remove(temp_filename)
+            if isinstance(filename,BytesIO):
+                os.remove(temp_filename)
+                
             return chunks
 
         except Exception as e:
@@ -1179,8 +1466,16 @@ class PDF_Reader:
         
     def read_pdf_online(self, url: str):
         """
-        Reads a pdf online from a given url.
-        Handles direct PDF links, MDPI pages, and ResearchGate pages.
+        Read and process a PDF or HTML page from a URL, extracting text, tables, and images.
+
+        params
+        ------
+        - url (str): URL pointing to a PDF file or a web page.
+
+        returns
+        -------
+        List[CompositeElement] | None: List of processed content chunks with metadata including filename.
+                                    Returns None if processing fails.
         """
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
@@ -1261,6 +1556,17 @@ class PDF_Reader:
                 return None
     
     def view_pdf_image(self,base_string:str):
+        """
+        Display an image extracted from a base64-encoded string, if it represents an image.
+
+        params
+        ------
+        - base_string (str): Base64-encoded image data.
+
+        returns
+        -------
+        None
+        """
         try:
             if self.is_image_data(base_string):
                 image_bytes = self.base64_to_image(base_string)
@@ -1271,6 +1577,17 @@ class PDF_Reader:
 
     @staticmethod
     def base64_to_image(base64_string:str):
+        """
+        Convert a base64-encoded string into raw image bytes.
+
+        params
+        ------
+        - base64_string (str): Base64-encoded image data.
+
+        returns
+        -------
+        bytes: Decoded image data.
+        """
         # Remove the data URI prefix if present
         if "data:image" in base64_string:
             base64_string = base64_string.split(",")[1]
@@ -1281,6 +1598,17 @@ class PDF_Reader:
     
     @staticmethod
     def create_image_from_bytes(image_bytes:bytes):
+        """
+        Create a PIL Image object from raw image bytes.
+
+        params
+        ------
+        - image_bytes (bytes): Raw image data.
+
+        returns
+        -------
+        Image: PIL Image object.
+        """
         # Create a BytesIO object to handle the image data
         image_stream = BytesIO(image_bytes)
 
@@ -1289,10 +1617,19 @@ class PDF_Reader:
         return image
     
     @staticmethod
-    def is_image_data(b64data): # Solution : https://github.com/langchain-ai/langchain/blob/master/cookbook/Multi_modal_RAG.ipynb 
+    def is_image_data(b64data): 
         """
-        Check if the base64 data is an image by looking at the start of the data
+        Check if a base64 string represents an image based on its file signature. This solution is based from : https://github.com/langchain-ai/langchain/blob/master/cookbook/Multi_modal_RAG.ipynb 
+
+        params
+        ------
+        - b64data (str): Base64-encoded data.
+
+        returns
+        -------
+        bool: True if the data represents a recognized image format, False otherwise.
         """
+        
         image_signatures = {
             b"\xff\xd8\xff": "jpg",
             b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a": "png",
@@ -1309,6 +1646,17 @@ class PDF_Reader:
             return False
 
     def separate_elements(self,chunks):
+        """
+        Separate a list of content chunks into text elements, tables, and images.
+
+        params
+        ------
+        - chunks (List[CompositeElement]): List of content chunks extracted from PDF or HTML.
+
+        returns
+        -------
+        Tuple[List, List[str], List[str]]: Lists of text elements, table HTML strings, and base64 images.
+        """
         tables = []
         texts = []
 
@@ -1330,9 +1678,18 @@ class PDF_Reader:
 
     def _get_summaries_table(self,tables:List[str], chatbot:Chatbot):
         """
-        Creates the summaries for tables and returns them
+        Generate summaries for extracted tables using a chatbot.
+
+        params
+        ------
+        - tables (List[str]): List of table HTML strings.
+        - chatbot (Chatbot): Chatbot instance to perform summarization.
+
+        returns
+        -------
+        List[str]: Summaries of each table. Returns empty list if summarization fails.
         """
-        templates = load_ai_template("config/config.yaml")
+        templates = load_ai_template("config/template.yaml")
         table_template_text = templates["Prompt_templates"]["Table_templates"]["template"]
         input_variables = [var["name"] for var in templates["Prompt_templates"]["Table_templates"].get("input_variables", [])]
 
@@ -1352,10 +1709,19 @@ class PDF_Reader:
 
     def _get_summaries_image(self,images : List[str] ,chatbot:Chatbot):
         """
-        Creates the summaries for images and returns them
+        Generate summaries for extracted images using a chatbot.
+
+        params
+        ------
+        - images (List[str]): List of base64-encoded image strings.
+        - chatbot (Chatbot): Chatbot instance to perform summarization.
+
+        returns
+        -------
+        List[str]: Summaries of each image. Returns empty list if summarization fails.
         """
 
-        templates = load_ai_template("config/config.yaml")
+        templates = load_ai_template("config/template.yaml")
         image_template_text = templates["Prompt_templates"]["Image_templates"]["template"]
 
         messages = [
@@ -1382,7 +1748,15 @@ class PDF_Reader:
     
     def get_pdf_title(self, chunk:List[CompositeElement]):
         """
-        Primarily used to retrieve the pdf title from an a pdf(online or offline based pdfs)
+        Retrieve the title of a PDF from its extracted content chunks.
+
+        params
+        ------
+        - chunk (List[CompositeElement]): List of content chunks extracted from a PDF.
+
+        returns
+        -------
+        str: The PDF title inferred from the content. Defaults to first title element if multiple exist.
         """
         len_el = 0
         if(len(chunk[len_el].text)>300):

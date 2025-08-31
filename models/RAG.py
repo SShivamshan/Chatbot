@@ -67,7 +67,7 @@ class RAG(BaseModel):
                     {"question": message["content"] if message["role"] == "User" else ""},
                     {"response": message["content"] if message["role"] == "AI" else ""}
                 )
-    def build_query_prompt(self, config_path="config/config.yaml"):
+    def build_query_prompt(self, config_path="config/template.yaml"):
         templates = load_ai_template(config_path)
         query_template = templates["Prompt_templates"]["Query_templates"]["template"]
         
@@ -93,9 +93,9 @@ class RAG(BaseModel):
         summarized_history = self.llm._call(summarize_prompt)
         return summarized_history
     
-    def build_prompt(self,kwargs, config_path="config/config.yaml"):
+    def build_prompt(self,kwargs, config_path="config/template.yaml"):
         """
-        Build a dynamic prompt using context, user question and prior chat history, with a template loaded from config.yaml.
+        Build a dynamic prompt using context, user question and prior chat history, with a template loaded from template.yaml.
         
         Parameters:
             kwargs (dict): Contains "context" (text/images), "question" and chat_history.
@@ -104,7 +104,7 @@ class RAG(BaseModel):
         Returns:
             ChatPromptTemplate: A formatted prompt ready for processing.
         """
-        # Load template from config.yaml
+        # Load template from template.yaml
         templates = load_ai_template(config_path)
         query_template = templates["Prompt_templates"]["RAG_templates"]["template"]
 

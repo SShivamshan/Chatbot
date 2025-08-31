@@ -122,7 +122,7 @@ class PDFAgent(BaseModel):
     def _create_template(self,template_name:str) -> PromptTemplate:
         try:
             self.logger.logger.debug("Loading template")
-            templates = load_ai_template(config_path="config/config.yaml")
+            templates = load_ai_template(config_path="config/template.yaml")
             template_config = templates["Agent_templates"][template_name]
             template = template_config["template"]
             input_variables = [var["name"] for var in template_config.get("input_variables", [])]
@@ -424,19 +424,22 @@ class PDFAgent(BaseModel):
         
         return executor
     
-    def run(self, query: str, filename: str = None):
+    def run(self, query: str, filename = None):
         """Run the agent with the given query, preserving state."""
         self.logger.start_agent_run(query)
         self.logger.logger.info(f"Running PDFAgent with query: {query}")
         result = None
         try:
             executor = self.initialize_agent()
-            
             uploaded = True if filename is None else False
+
             if filename is None:
                 self.uploaded_filename = None
-            elif hasattr(filename, "name"):
+            elif isinstance(filename,BytesIO) and hasattr(filename, "name"):
                 self.uploaded_filename = filename.name
+            else:
+                if isinstance(filename,str):
+                    self.uploaded_filename = filename
 
             # Step 1: Initialize state if not already done
             if not self.graph_state:
